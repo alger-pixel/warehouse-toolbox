@@ -1,0 +1,2 @@
+/* Sorting-only layout hooks. Shared controls remain in components.css. */
+.sorting-workspace .pallet-summary { min-height: 150px; }
