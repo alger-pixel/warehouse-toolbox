@@ -8,13 +8,13 @@ MKITE Warehouse Tools provides a focused home for matching, sorting, counting, d
 
 ## Current Version
 
-UI Foundation v0.2
+UI Color System v0.7
 
 ## Architecture
 
 - **Application shell:** Sidebar, header, theme controls, responsive layout, and shared view rendering.
 - **Shared services:** Safe namespaced storage, toast notifications, optional Web Audio tones, and hash-based routing.
-- **Tool registry:** `js/tools-registry.js` is the single metadata source for dashboard cards, the Tools catalog, and search.
+- **Tool registry:** `js/tools-registry.js` is the single metadata source for dashboard cards, the Tools catalog, search, and each tool's visual theme identity.
 - **Tool modules:** Each active tool owns an isolated render/init/session/reset/cleanup lifecycle under `js/tools/`.
 - **CSS layers:** Design tokens, base rules, layout, shared components, responsive rules, and narrowly scoped tool styles.
 - **Local reporting dependency:** SheetJS Community Edition 0.20.3 is vendored under `vendor/` for offline `.xlsx` generation; no CDN request or build step is used at runtime.
@@ -28,7 +28,8 @@ warehouse-toolbox/
 ├── index.html
 ├── assets/
 │   ├── images/
-│   │   └── mkite-logo.png
+│   │   ├── mkite-logo.png
+│   │   └── mkite-logo.svg
 │   └── icons/
 ├── css/
 │   ├── variables.css

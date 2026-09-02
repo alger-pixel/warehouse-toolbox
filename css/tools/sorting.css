@@ -1,2 +1,12 @@
-/* Sorting-only layout hooks. Shared controls remain in components.css. */
+/* Sorting placeholder uses the shared tool-page system; no sorting logic yet. */
+.sorting-overview { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 0; padding: 8px; background: var(--panel-bg); box-shadow: var(--shadow-sm); }
+.sorting-overview .tool-stat { border: 0; background: transparent; }
+.sorting-main { padding: clamp(25px,2.5vw,36px); border-radius: 24px; }
+.sorting-columns { display: grid; grid-template-columns: minmax(0,.8fr) minmax(360px,1.2fr); gap: 22px; }
+.sorting-columns>.tool-panel { padding: 26px; border-radius: 20px; background: var(--panel-secondary); }
+.sorting-columns>.tool-status-surface { background: color-mix(in srgb,var(--current-tool-soft) 58%,var(--panel-bg)); }
+.sorting-report-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 22px; }
+.sorting-report-grid>.panel { padding: clamp(25px,2.5vw,36px); border-radius: 24px; }
 .sorting-workspace .pallet-summary { min-height: 150px; }
+@media (max-width:800px) { .sorting-columns,.sorting-report-grid { grid-template-columns: 1fr; } }
+@media (max-width:560px) { .sorting-overview { grid-template-columns: repeat(2,minmax(0,1fr)); } .sorting-columns>.tool-panel { padding: 22px; } }

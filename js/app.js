@@ -37,20 +37,21 @@
     return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : { theme: "dark", sidebarCollapsed: false };
   }
 
-  function toolCard(tool) {
+  function toolCard(tool, variant) {
     const active = tool.status === "active";
-    return `<button class="tool-card" type="button" data-tool-id="${escapeHtml(tool.id)}" aria-label="${escapeHtml(tool.name)}${active ? "" : ", coming soon"}">
+    const variantClass = variant ? ` ${variant}` : "";
+    return `<button class="tool-card${variantClass}" type="button" data-tool-id="${escapeHtml(tool.id)}" data-tool-theme="${escapeHtml(tool.theme || tool.id)}" aria-label="${escapeHtml(tool.name)}${active ? "" : ", coming soon"}"${active ? "" : " disabled"}>
       <span class="tool-icon">${icons[tool.icon] || icons.warehouse}</span>
       ${active ? "" : '<span class="badge badge-muted tool-status">Coming Soon</span>'}
-      <h4>${escapeHtml(tool.name)}</h4><p>${escapeHtml(tool.description)}</p><span class="tool-arrow">${icons.arrow}</span>
+      <span class="tool-copy"><h4>${escapeHtml(tool.name)}</h4><p>${escapeHtml(tool.description)}</p></span><span class="tool-arrow">${icons.arrow}</span>
     </button>`;
   }
 
   function searchView(options) {
     const tools = options.tools;
-    mainContent.innerHTML = `${pageHeader(options.title, options.description)}
+    mainContent.innerHTML = `<div class="library-view">${pageHeader(options.title, options.description)}
       <div class="search-hero"><div class="search-field">${icons.search}<label class="sr-only" for="tool-search">Search tools</label><input id="tool-search" type="search" placeholder="Search tools..." autocomplete="off"><button class="icon-button search-clear" id="search-clear" type="button" aria-label="Clear search">×</button></div></div>
-      <div class="section-header"><h3>${escapeHtml(options.sectionTitle)}</h3><span id="search-count"></span></div><div class="tool-grid" id="tool-grid"></div>`;
+      <div class="section-header"><h3>${escapeHtml(options.sectionTitle)}</h3><span id="search-count"></span></div><div class="tool-grid" id="tool-grid"></div></div>`;
     const input = document.getElementById("tool-search"); const clear = document.getElementById("search-clear"); const grid = document.getElementById("tool-grid"); const count = document.getElementById("search-count");
     function update() {
       const query = input.value.trim();
@@ -62,7 +63,29 @@
   }
 
   function renderDashboard() {
-    searchView({ title: "Warehouse Tools", description: "Fast utilities for daily warehouse operations.", sectionTitle: "Quick Tools", tools: window.MkiteToolRegistry.all().slice(0, 4), includeAll: true });
+    const allTools = window.MkiteToolRegistry.all();
+    const featured = allTools.filter((tool) => tool.status === "active");
+    const planned = allTools.filter((tool) => tool.status !== "active").slice(0, 2);
+    mainContent.innerHTML = `<div class="dashboard-view">
+      <section class="dashboard-intro" aria-labelledby="dashboard-title">
+        <span class="dashboard-eyebrow">Operations workspace</span>
+        <div class="dashboard-intro-copy"><div><h2 id="dashboard-title">Warehouse Tools</h2><p>Fast utilities for daily warehouse operations.</p></div><span class="dashboard-availability"><i></i>${featured.length} tools ready</span></div>
+        <div class="dashboard-search"><div class="search-field">${icons.search}<label class="sr-only" for="tool-search">Search tools</label><input id="tool-search" type="search" placeholder="What do you need to do?" autocomplete="off"><button class="icon-button search-clear" id="search-clear" type="button" aria-label="Clear search">×</button></div><kbd>/</kbd></div>
+      </section>
+      <div id="dashboard-catalog">
+        <section class="featured-section"><div class="section-header"><h3>Featured tools</h3><span>Ready to use</span></div><div class="featured-tools">${featured.map((tool, index) => toolCard(tool, `tool-card-featured featured-${index + 1}`)).join("")}</div></section>
+        <section class="planned-section"><div class="section-header"><h3>Expanding the toolbox</h3><span>${planned.length} planned</span></div><div class="planned-tools">${planned.map((tool) => toolCard(tool, "tool-card-planned")).join("")}</div></section>
+      </div>
+    </div>`;
+    const input = document.getElementById("tool-search"); const clear = document.getElementById("search-clear"); const catalog = document.getElementById("dashboard-catalog");
+    const defaultCatalog = catalog.innerHTML;
+    function updateDashboardSearch() {
+      const query = input.value.trim(); clear.classList.toggle("is-visible", Boolean(query));
+      if (!query) { catalog.innerHTML = defaultCatalog; return; }
+      const matches = window.MkiteToolRegistry.search(query);
+      catalog.innerHTML = `<section class="dashboard-results"><div class="section-header"><h3>Search results</h3><span>${matches.length} ${matches.length === 1 ? "tool" : "tools"}</span></div><div class="tool-grid">${matches.length ? matches.map((tool) => toolCard(tool)).join("") : `<div class="empty-state">${icons.search}<h3>No tools found</h3><p>Try another name or category.</p></div>`}</div></section>`;
+    }
+    input.addEventListener("input", updateDashboardSearch); clear.addEventListener("click", () => { input.value = ""; updateDashboardSearch(); input.focus(); });
   }
 
   function renderTools() {
@@ -73,7 +96,7 @@
     const settings = getSettings();
     mainContent.innerHTML = `${pageHeader("Settings", "Application preferences and information.")}
       <div class="workspace-stack"><section class="panel"><div class="panel-header"><div><h3>Appearance</h3><p>Preferences are stored in this browser.</p></div></div><div class="form-control"><label for="settings-theme">Theme</label><select class="select" id="settings-theme"><option value="dark"${settings.theme === "dark" ? " selected" : ""}>Dark</option><option value="light"${settings.theme === "light" ? " selected" : ""}>Light</option></select></div></section>
-      <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">UI Foundation v0.2</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p></section></div>`;
+      <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">UI Color System v0.7</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p></section></div>`;
     document.getElementById("settings-theme").addEventListener("change", (event) => setTheme(event.target.value));
   }
 
@@ -116,7 +139,12 @@
   document.getElementById("topbar-search").addEventListener("click", () => { window.MkiteRouter.navigate({ view: "tools" }); window.setTimeout(() => document.getElementById("tool-search")?.focus(), 0); });
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeMobileMenu(); if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) { event.preventDefault(); window.MkiteRouter.navigate({ view: "tools" }); window.setTimeout(() => document.getElementById("tool-search")?.focus(), 0); } });
 
-  const logo = document.querySelector(".brand-logo"); logo.addEventListener("error", () => logo.classList.add("is-missing"));
+  const logo = document.querySelector(".brand-logo");
+  const brand = logo.closest(".brand");
+  logo.addEventListener("error", () => {
+    if (!brand.classList.contains("uses-legacy-logo")) { brand.classList.add("uses-legacy-logo"); logo.src = "assets/images/mkite-logo.png"; }
+    else logo.alt = "MKITE International logo unavailable";
+  });
   const settings = getSettings(); setTheme(settings.theme); setCollapsed(Boolean(settings.sidebarCollapsed));
   window.MkiteRouter.start(onRoute);
 }(window, document));

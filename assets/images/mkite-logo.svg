@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 100 500 165" role="img" aria-labelledby="title">
+  <title id="title">MKITE International</title>
+  <defs>
+    <filter id="remove-white" x="-5%" y="-15%" width="110%" height="130%" color-interpolation-filters="sRGB">
+      <feColorMatrix type="matrix" values="
+        1  0  0  0  0
+        0  1  0  0  0
+        0  0  1  0  0
+       -1 -1 -1  0  2.85"/>
+    </filter>
+  </defs>
+  <image href="mkite-logo.png" x="0" y="0" width="597" height="337" preserveAspectRatio="xMidYMid meet" filter="url(#remove-white)"/>
+</svg>
