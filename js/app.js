@@ -21,7 +21,10 @@
     count: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5zM8 9h8M8 13h5"/></svg>',
     data: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/><circle cx="7" cy="6" r="1"/></svg>',
     calculator: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2m4 0h2m-8 4h2m4 0h2"/></svg>',
-    warehouse: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21v-8h10v8"/></svg>'
+    warehouse: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21v-8h10v8"/></svg>',
+    validation: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/><circle cx="12" cy="12" r="9"/></svg>',
+    quality: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>',
+    parts: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v6m0 8v6M2 12h6m8 0h6"/><circle cx="12" cy="12" r="4"/></svg>'
   };
 
   function escapeHtml(value) {
@@ -34,7 +37,7 @@
 
   function getSettings() {
     const stored = window.MkiteStorage.get("settings", null);
-    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : { theme: "dark", sidebarCollapsed: false };
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : { theme: "light", sidebarCollapsed: false };
   }
 
   function toolCard(tool, variant) {
@@ -92,11 +95,76 @@
     searchView({ title: "Tools", description: "Utilities for warehouse operations and data processing.", sectionTitle: "Tool Library", tools: window.MkiteToolRegistry.all(), includeAll: true });
   }
 
+  function clientCard(client, isRecent) {
+    const tools = window.MkiteClientToolRegistry.forClient(client.id);
+    return `<button class="client-card" type="button" data-client-id="${escapeHtml(client.id)}" data-client-theme="${escapeHtml(client.theme || client.id)}">
+      ${clientIdentity(client)}
+      <span class="client-card-copy">${isRecent ? '<span class="client-card-label">Recently Used</span>' : ""}<strong>${escapeHtml(client.name)}</strong><span>${escapeHtml(client.description)}</span></span>
+      <span class="client-card-meta">${tools.length} ${tools.length === 1 ? "tool" : "tools"}</span><span class="client-card-arrow">${icons.arrow}</span>
+    </button>`;
+  }
+
+  function clientIdentity(client) {
+    return client.logo
+      ? `<span class="client-logo-wrap"><img src="${escapeHtml(client.logo)}" alt="${escapeHtml(client.name)} logo"></span>`
+      : `<span class="client-mark" aria-hidden="true">${escapeHtml(client.shortName || client.name.charAt(0))}</span>`;
+  }
+
+  function renderClientTools() {
+    const clients = window.MkiteClientRegistry.all();
+    const lastClient = window.MkiteClientRegistry.get(window.MkiteStorage.get("client-tools.last-client", ""));
+    mainContent.innerHTML = `<div class="client-library"><div class="page-header"><div><span class="tool-kicker">Client workspaces</span><h2>Client Tools</h2><p>Select the client you are currently serving.</p></div></div>
+      ${lastClient ? `<section class="recent-client"><div class="section-header"><h3>Recently Used</h3></div>${clientCard(lastClient, true)}</section>` : ""}
+      <div class="client-search search-field">${icons.search}<label class="sr-only" for="client-search">Search clients</label><input id="client-search" type="search" placeholder="Search clients..." autocomplete="off"><button class="icon-button search-clear" id="client-search-clear" type="button" aria-label="Clear search">×</button></div>
+      <section><div class="section-header"><h3>All Clients</h3><span id="client-count"></span></div><div class="client-grid" id="client-grid"></div></section></div>`;
+    const input = document.getElementById("client-search"); const clear = document.getElementById("client-search-clear"); const grid = document.getElementById("client-grid"); const count = document.getElementById("client-count");
+    function update() { const matches = window.MkiteClientRegistry.search(input.value); clear.classList.toggle("is-visible", Boolean(input.value.trim())); count.textContent = `${matches.length} ${matches.length === 1 ? "client" : "clients"}`; grid.innerHTML = matches.length ? matches.map((client) => clientCard(client, false)).join("") : `<div class="empty-state">${icons.search}<h3>No clients found</h3><p>Try another client name.</p></div>`; }
+    input.addEventListener("input", update); clear.addEventListener("click", () => { input.value = ""; update(); input.focus(); }); update();
+  }
+
+  function clientToolCard(tool) {
+    const active = tool.status === "active";
+    const statusLabel = tool.status === "coming-soon" ? "Coming Soon" : tool.status === "disabled" ? "Disabled" : tool.version;
+    return `<button class="client-tool-card" type="button" data-client-id="${escapeHtml(tool.clientId)}" data-client-tool-id="${escapeHtml(tool.id)}" data-client-theme="${escapeHtml(tool.theme || tool.clientId)}"${active ? "" : " disabled"}>
+      <span class="client-tool-icon">${icons[tool.icon] || icons.warehouse}</span><span class="client-tool-copy"><span class="client-tool-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.name)}</strong><span>${escapeHtml(tool.description)}</span></span><span class="client-tool-version">${escapeHtml(statusLabel)}</span>${active ? `<span class="client-card-arrow">${icons.arrow}</span>` : ""}
+    </button>`;
+  }
+
+  function renderInvalidClient(title, description) {
+    mainContent.innerHTML = `<div class="client-not-found"><span class="client-mark" aria-hidden="true">?</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p><button class="button button-primary" type="button" data-route="client-tools">Back to Client Tools</button></div>`;
+  }
+
+  function renderClientPool(clientId) {
+    const client = window.MkiteClientRegistry.get(clientId);
+    if (!client) { renderInvalidClient("Client not found", "This client is not available in the current deployment."); return; }
+    window.MkiteStorage.set("client-tools.last-client", client.id);
+    const tools = window.MkiteClientToolRegistry.forClient(client.id);
+    mainContent.innerHTML = `<div class="client-pool" data-client-theme="${escapeHtml(client.theme || client.id)}"><button class="back-link" type="button" data-route="client-tools">← Back to All Clients</button><div class="client-pool-hero">${clientIdentity(client)}<div><span class="tool-kicker">Client workspace</span><h2>${escapeHtml(client.name)}</h2><p>${escapeHtml(client.description)}</p></div><span class="client-pool-count">${tools.length}<small>available tools</small></span></div>
+      <div class="client-search search-field">${icons.search}<label class="sr-only" for="client-tool-search">Search ${escapeHtml(client.name)} tools</label><input id="client-tool-search" type="search" placeholder="Search tools..." autocomplete="off"><button class="icon-button search-clear" id="client-tool-search-clear" type="button" aria-label="Clear search">×</button></div><div id="client-tool-groups"></div></div>`;
+    const input = document.getElementById("client-tool-search"); const clear = document.getElementById("client-tool-search-clear"); const groups = document.getElementById("client-tool-groups");
+    function update() {
+      const matches = window.MkiteClientToolRegistry.search(client.id, input.value); clear.classList.toggle("is-visible", Boolean(input.value.trim()));
+      const categorized = matches.reduce((result, tool) => { (result[tool.category] ||= []).push(tool); return result; }, {});
+      groups.innerHTML = matches.length ? Object.entries(categorized).map(([category, items]) => `<section class="client-tool-group"><div class="section-header"><h3>${escapeHtml(category)}</h3><span>${items.length}</span></div><div class="client-tool-grid">${items.map(clientToolCard).join("")}</div></section>`).join("") : `<div class="empty-state">${icons.search}<h3>No tools found</h3><p>Try another tool name or category.</p></div>`;
+    }
+    input.addEventListener("input", update); clear.addEventListener("click", () => { input.value = ""; update(); input.focus(); }); update();
+  }
+
+  function renderClientToolWorkspace(clientId, toolId) {
+    const client = window.MkiteClientRegistry.get(clientId); const tool = window.MkiteClientToolRegistry.get(clientId, toolId);
+    if (!client) { renderInvalidClient("Client not found", "This client is not available in the current deployment."); return; }
+    if (!tool || tool.status !== "active") { renderInvalidClient("Tool unavailable", `This ${client.name} tool is not available.`); return; }
+    window.MkiteStorage.set("client-tools.last-client", client.id);
+    const module = tool.module && window.MkiteClientToolModules ? window.MkiteClientToolModules[tool.module] : null;
+    mainContent.innerHTML = `<div class="client-tool-workspace tool-page" data-client-theme="${escapeHtml(client.theme || client.id)}"><button class="back-link" type="button" data-client-id="${escapeHtml(client.id)}">← Back to ${escapeHtml(client.name)} Tools</button><div class="client-tool-hero"><div><span class="tool-kicker">${escapeHtml(client.name)} · ${escapeHtml(tool.category)}</span><h2>${escapeHtml(tool.name)}</h2><p>${escapeHtml(tool.description)}</p></div><span class="badge">${escapeHtml(tool.version)}</span></div><div class="client-tool-facts"><span><small>Client</small>${escapeHtml(client.name)}</span><span><small>Category</small>${escapeHtml(tool.category)}</span><span><small>Version</small>${escapeHtml(tool.version)}</span></div><section class="panel client-tool-module" id="client-tool-module">${module ? module.render() : '<div class="client-tool-placeholder"><h3>Workspace coming soon</h3></div>'}</section></div>`;
+    if (module) { activeToolModule = module; module.init({ root: document.getElementById("client-tool-module"), storage: window.MkiteStorage, toast: window.MkiteToast, audio: window.MkiteAudio, client, tool }); }
+  }
+
   function renderSettings() {
     const settings = getSettings();
     mainContent.innerHTML = `${pageHeader("Settings", "Application preferences and information.")}
       <div class="workspace-stack"><section class="panel"><div class="panel-header"><div><h3>Appearance</h3><p>Preferences are stored in this browser.</p></div></div><div class="form-control"><label for="settings-theme">Theme</label><select class="select" id="settings-theme"><option value="dark"${settings.theme === "dark" ? " selected" : ""}>Dark</option><option value="light"${settings.theme === "light" ? " selected" : ""}>Light</option></select></div></section>
-      <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">UI Color System v0.7</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p></section></div>`;
+      <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">B044 Put Away Scan v1</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p></section></div>`;
     document.getElementById("settings-theme").addEventListener("change", (event) => setTheme(event.target.value));
   }
 
@@ -108,7 +176,7 @@
   }
 
   function setTheme(theme) {
-    const safeTheme = theme === "light" ? "light" : "dark";
+    const safeTheme = theme === "dark" ? "dark" : "light";
     document.documentElement.dataset.theme = safeTheme; themeToggle.setAttribute("aria-label", `Switch to ${safeTheme === "dark" ? "light" : "dark"} mode`);
     const settings = getSettings(); settings.theme = safeTheme; window.MkiteStorage.set("settings", settings);
   }
@@ -121,16 +189,29 @@
   function closeMobileMenu() { appShell.classList.remove("is-mobile-open"); menuButton.setAttribute("aria-expanded", "false"); }
   function onRoute(route) {
     if (activeToolModule && activeToolModule.cleanup) activeToolModule.cleanup(); activeToolModule = null;
-    const title = route.view === "tool" ? (window.MkiteToolRegistry.get(route.toolId)?.name || "Tools") : route.view.charAt(0).toUpperCase() + route.view.slice(1);
+    let title;
+    if (route.view === "tool") title = window.MkiteToolRegistry.get(route.toolId)?.name || "Tools";
+    else if (route.view === "client-tool") title = window.MkiteClientToolRegistry.get(route.clientId, route.toolId)?.name || "Client Tool";
+    else if (route.view === "client") title = window.MkiteClientRegistry.get(route.clientId)?.name || "Client Tools";
+    else title = route.view === "client-tools" ? "Client Tools" : route.view.charAt(0).toUpperCase() + route.view.slice(1);
     sectionTitle.textContent = title; document.title = `${title} | MKITE Warehouse Tools`;
-    document.querySelectorAll(".nav-item").forEach((item) => { const active = item.dataset.route === (route.view === "tool" ? "tools" : route.view); item.classList.toggle("is-active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
-    if (route.view === "dashboard") renderDashboard(); else if (route.view === "tools") renderTools(); else if (route.view === "settings") renderSettings(); else renderTool(route.toolId);
+    const navigationRoute = route.view === "tool" ? "tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
+    document.querySelectorAll(".nav-item").forEach((item) => { const active = item.dataset.route === navigationRoute; item.classList.toggle("is-active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
+    if (route.view === "dashboard") renderDashboard();
+    else if (route.view === "tools") renderTools();
+    else if (route.view === "client-tools") renderClientTools();
+    else if (route.view === "client") renderClientPool(route.clientId);
+    else if (route.view === "client-tool") renderClientToolWorkspace(route.clientId, route.toolId);
+    else if (route.view === "settings") renderSettings();
+    else renderTool(route.toolId);
     closeMobileMenu(); mainContent.focus({ preventScroll: true });
   }
 
   document.addEventListener("click", (event) => {
     const routeButton = event.target.closest("[data-route]"); if (routeButton) window.MkiteRouter.navigate({ view: routeButton.dataset.route });
     const toolButton = event.target.closest("[data-tool-id]"); if (toolButton) { const tool = window.MkiteToolRegistry.get(toolButton.dataset.toolId); if (tool.status === "active") window.MkiteRouter.navigate({ view: "tool", toolId: tool.id }); else window.MkiteToast.show(`${tool.name} is coming soon`); }
+    const clientToolButton = event.target.closest("[data-client-tool-id]"); if (clientToolButton && !clientToolButton.disabled) window.MkiteRouter.navigate({ view: "client-tool", clientId: clientToolButton.dataset.clientId, toolId: clientToolButton.dataset.clientToolId });
+    const clientButton = event.target.closest("[data-client-id]:not([data-client-tool-id])"); if (clientButton) window.MkiteRouter.navigate({ view: "client", clientId: clientButton.dataset.clientId });
   });
   themeToggle.addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   collapseButton.addEventListener("click", () => setCollapsed(!appShell.classList.contains("is-collapsed")));

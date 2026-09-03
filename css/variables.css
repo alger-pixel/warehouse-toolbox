@@ -47,6 +47,10 @@
   --tool-warehouse-soft: #36251f;
   --tool-warehouse-text: #fff3ed;
   --tool-warehouse-soft-text: #e7c4b7;
+  --client-b044: #245f9f;
+  --client-b044-soft: #182c43;
+  --client-b044-text: #f7fbff;
+  --client-b044-soft-text: #bfd6ef;
   --radius-small: 8px;
   --radius-medium: 13px;
   --radius-large: 17px;
@@ -111,4 +115,8 @@
   --tool-warehouse-soft: #f8ebe6;
   --tool-warehouse-text: #573126;
   --tool-warehouse-soft-text: #824f3f;
+  --client-b044: #dbeafb;
+  --client-b044-soft: #edf5fe;
+  --client-b044-text: #1d4674;
+  --client-b044-soft-text: #315f91;
 }
