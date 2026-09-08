@@ -24,7 +24,8 @@
     warehouse: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21v-8h10v8"/></svg>',
     validation: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/><circle cx="12" cy="12" r="9"/></svg>',
     quality: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>',
-    parts: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v6m0 8v6M2 12h6m8 0h6"/><circle cx="12" cy="12" r="4"/></svg>'
+    parts: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v6m0 8v6M2 12h6m8 0h6"/><circle cx="12" cy="12" r="4"/></svg>',
+    receiving: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 3l8 4.5V17l-8 4-8-4V7.5Z"/><path d="m4 7.5 8 4 8-4M12 11.5V21M8 5.3l8 4.2"/></svg>'
   };
 
   function escapeHtml(value) {
@@ -72,12 +73,13 @@
     mainContent.innerHTML = `<div class="dashboard-view">
       <section class="dashboard-intro" aria-labelledby="dashboard-title">
         <span class="dashboard-eyebrow">Operations workspace</span>
-        <div class="dashboard-intro-copy"><div><h2 id="dashboard-title">Warehouse Tools</h2><p>Fast utilities for daily warehouse operations.</p></div><span class="dashboard-availability"><i></i>${featured.length} tools ready</span></div>
+        <div class="dashboard-intro-copy"><div><h2 id="dashboard-title">Warehouse Tools</h2><p>Fast utilities for daily warehouse operations.</p></div><span class="dashboard-availability"><i></i>${featured.length} general tools ready</span></div>
         <div class="dashboard-search"><div class="search-field">${icons.search}<label class="sr-only" for="tool-search">Search tools</label><input id="tool-search" type="search" placeholder="What do you need to do?" autocomplete="off"><button class="icon-button search-clear" id="search-clear" type="button" aria-label="Clear search">×</button></div><kbd>/</kbd></div>
       </section>
       <div id="dashboard-catalog">
         <section class="featured-section"><div class="section-header"><h3>Featured tools</h3><span>Ready to use</span></div><div class="featured-tools">${featured.map((tool, index) => toolCard(tool, `tool-card-featured featured-${index + 1}`)).join("")}</div></section>
         <section class="planned-section"><div class="section-header"><h3>Expanding the toolbox</h3><span>${planned.length} planned</span></div><div class="planned-tools">${planned.map((tool) => toolCard(tool, "tool-card-planned")).join("")}</div></section>
+        <section class="platform-section"><div class="section-header"><h3>MKITE Operations</h3><span>Internal platform</span></div><button class="platform-card" type="button" data-route="in-house-tools"><span class="in-house-mark">${icons.receiving}</span><span><strong>In House Tools</strong><p>Internal warehouse operations and management tools, beginning with Receiving.</p></span><span class="platform-card-meta">1 active tool</span><span class="in-house-card-arrow">${icons.arrow}</span></button></section>
       </div>
     </div>`;
     const input = document.getElementById("tool-search"); const clear = document.getElementById("search-clear"); const catalog = document.getElementById("dashboard-catalog");
@@ -92,7 +94,27 @@
   }
 
   function renderTools() {
-    searchView({ title: "Tools", description: "Utilities for warehouse operations and data processing.", sectionTitle: "Tool Library", tools: window.MkiteToolRegistry.all(), includeAll: true });
+    searchView({ title: "Assisting Tools", description: "Utilities for warehouse operations and data processing.", sectionTitle: "Tool Library", tools: window.MkiteToolRegistry.all(), includeAll: true });
+  }
+
+  function inHouseToolCard(tool) {
+    const active = tool.status === "active";
+    return `<button class="in-house-card" type="button" data-in-house-tool-id="${escapeHtml(tool.id)}" data-in-house-theme="${escapeHtml(tool.theme || tool.id)}"${active ? "" : " disabled"}><span class="in-house-card-icon">${icons[tool.icon] || icons.warehouse}</span><span class="in-house-card-copy"><span class="in-house-card-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.name)}</strong><span>${escapeHtml(tool.description)}</span></span><span class="in-house-card-meta">${escapeHtml(active ? `${tool.version} · Active` : "Coming Soon")}</span>${active ? `<span class="in-house-card-arrow">${icons.arrow}</span>` : ""}</button>`;
+  }
+
+  function renderInHouseTools() {
+    mainContent.innerHTML = `<div class="in-house-library"><div class="in-house-intro"><div><span class="tool-kicker">MKITE Operations</span><h2>In House Tools</h2><p>Internal warehouse operations and management tools.</p></div><span class="in-house-mark">${icons.receiving}</span></div><div class="in-house-search search-field">${icons.search}<label class="sr-only" for="in-house-search">Search In House Tools</label><input id="in-house-search" type="search" placeholder="Search internal tools..." autocomplete="off"><button class="icon-button search-clear" id="in-house-search-clear" type="button" aria-label="Clear search">×</button></div><section><div class="section-header"><h3>Tool Library</h3><span id="in-house-count"></span></div><div class="in-house-grid" id="in-house-grid"></div></section></div>`;
+    const input = document.getElementById("in-house-search"); const clear = document.getElementById("in-house-search-clear"); const grid = document.getElementById("in-house-grid"); const count = document.getElementById("in-house-count");
+    function update() { const matches = window.MkiteInHouseToolRegistry.search(input.value); clear.classList.toggle("is-visible", Boolean(input.value.trim())); count.textContent = `${matches.length} ${matches.length === 1 ? "tool" : "tools"}`; grid.innerHTML = matches.length ? matches.map(inHouseToolCard).join("") : `<div class="empty-state">${icons.search}<h3>No internal tools found</h3><p>Try another tool name or category.</p></div>`; }
+    input.addEventListener("input", update); clear.addEventListener("click", () => { input.value = ""; update(); input.focus(); }); update();
+  }
+
+  function renderInHouseTool(toolId) {
+    const tool = window.MkiteInHouseToolRegistry.get(toolId);
+    if (!tool || tool.status !== "active") { mainContent.innerHTML = `<div class="client-not-found"><span class="client-mark" aria-hidden="true">?</span><h2>Internal tool unavailable</h2><p>This In House Tool is not available in the current deployment.</p><button class="button button-primary" type="button" data-route="in-house-tools">Back to In House Tools</button></div>`; return; }
+    const module = tool.module && window.MkiteInHouseTools ? window.MkiteInHouseTools[tool.module] : null;
+    mainContent.innerHTML = `<div class="in-house-tool-page tool-page" data-in-house-theme="${escapeHtml(tool.theme || tool.id)}"><button class="back-link" type="button" data-route="in-house-tools">← In House Tools</button><div class="in-house-tool-hero"><div><span class="tool-kicker">In House Tools / ${escapeHtml(tool.category)}</span><h2>${escapeHtml(tool.name)}</h2><p>${escapeHtml(tool.description)}</p></div><span class="badge">${escapeHtml(tool.version)}</span></div><section class="in-house-tool-module" id="in-house-tool-module">${module ? module.render() : '<div class="placeholder-block">Workspace unavailable</div>'}</section></div>`;
+    if (module) { activeToolModule = module; module.init({ root: document.getElementById("in-house-tool-module"), storage: window.MkiteStorage, toast: window.MkiteToast, audio: window.MkiteAudio, tool }); }
   }
 
   function clientCard(client, isRecent) {
@@ -164,7 +186,7 @@
     const settings = getSettings();
     mainContent.innerHTML = `${pageHeader("Settings", "Application preferences and information.")}
       <div class="workspace-stack"><section class="panel"><div class="panel-header"><div><h3>Appearance</h3><p>Preferences are stored in this browser.</p></div></div><div class="form-control"><label for="settings-theme">Theme</label><select class="select" id="settings-theme"><option value="dark"${settings.theme === "dark" ? " selected" : ""}>Dark</option><option value="light"${settings.theme === "light" ? " selected" : ""}>Light</option></select></div></section>
-      <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">B044 Put Away Scan v1</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p></section></div>`;
+      <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">Receiving Live Integration v0.3</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p></section></div>`;
     document.getElementById("settings-theme").addEventListener("change", (event) => setTheme(event.target.value));
   }
 
@@ -190,18 +212,21 @@
   function onRoute(route) {
     if (activeToolModule && activeToolModule.cleanup) activeToolModule.cleanup(); activeToolModule = null;
     let title;
-    if (route.view === "tool") title = window.MkiteToolRegistry.get(route.toolId)?.name || "Tools";
+    if (route.view === "tool") title = window.MkiteToolRegistry.get(route.toolId)?.name || "Assisting Tools";
+    else if (route.view === "in-house-tool") title = window.MkiteInHouseToolRegistry.get(route.toolId)?.name || "In House Tools";
     else if (route.view === "client-tool") title = window.MkiteClientToolRegistry.get(route.clientId, route.toolId)?.name || "Client Tool";
     else if (route.view === "client") title = window.MkiteClientRegistry.get(route.clientId)?.name || "Client Tools";
-    else title = route.view === "client-tools" ? "Client Tools" : route.view.charAt(0).toUpperCase() + route.view.slice(1);
+    else title = route.view === "tools" ? "Assisting Tools" : route.view === "client-tools" ? "Client Tools" : route.view === "in-house-tools" ? "In House Tools" : route.view.charAt(0).toUpperCase() + route.view.slice(1);
     sectionTitle.textContent = title; document.title = `${title} | MKITE Warehouse Tools`;
-    const navigationRoute = route.view === "tool" ? "tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
+    const navigationRoute = route.view === "tool" ? "tools" : route.view === "in-house-tool" ? "in-house-tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
     document.querySelectorAll(".nav-item").forEach((item) => { const active = item.dataset.route === navigationRoute; item.classList.toggle("is-active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
     if (route.view === "dashboard") renderDashboard();
     else if (route.view === "tools") renderTools();
     else if (route.view === "client-tools") renderClientTools();
     else if (route.view === "client") renderClientPool(route.clientId);
     else if (route.view === "client-tool") renderClientToolWorkspace(route.clientId, route.toolId);
+    else if (route.view === "in-house-tools") renderInHouseTools();
+    else if (route.view === "in-house-tool") renderInHouseTool(route.toolId);
     else if (route.view === "settings") renderSettings();
     else renderTool(route.toolId);
     closeMobileMenu(); mainContent.focus({ preventScroll: true });
@@ -212,6 +237,7 @@
     const toolButton = event.target.closest("[data-tool-id]"); if (toolButton) { const tool = window.MkiteToolRegistry.get(toolButton.dataset.toolId); if (tool.status === "active") window.MkiteRouter.navigate({ view: "tool", toolId: tool.id }); else window.MkiteToast.show(`${tool.name} is coming soon`); }
     const clientToolButton = event.target.closest("[data-client-tool-id]"); if (clientToolButton && !clientToolButton.disabled) window.MkiteRouter.navigate({ view: "client-tool", clientId: clientToolButton.dataset.clientId, toolId: clientToolButton.dataset.clientToolId });
     const clientButton = event.target.closest("[data-client-id]:not([data-client-tool-id])"); if (clientButton) window.MkiteRouter.navigate({ view: "client", clientId: clientButton.dataset.clientId });
+    const inHouseButton = event.target.closest("[data-in-house-tool-id]"); if (inHouseButton && !inHouseButton.disabled) window.MkiteRouter.navigate({ view: "in-house-tool", toolId: inHouseButton.dataset.inHouseToolId });
   });
   themeToggle.addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   collapseButton.addEventListener("click", () => setCollapsed(!appShell.classList.contains("is-collapsed")));

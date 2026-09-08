@@ -1,0 +1,19 @@
+name = "mkite-secure-api"
+main = "src/index.js"
+compatibility_date = "2026-09-03"
+
+# Configure production values with Worker environment/secrets. Do not place
+# FEISHU_APP_SECRET or other credentials in this file.
+[vars]
+ALLOWED_ORIGINS = "https://alger-pixel.github.io,http://127.0.0.1:5501,http://localhost:5501"
+FEISHU_CLIENT_TABLE_ID = "tblQGCq6Y404LLJB"
+FEISHU_PICKING_LIST_TABLE_ID = "tblRfLgo1jIQkzmi"
+WAREHOUSE_TIME_ZONE = "America/Toronto"
+
+[[durable_objects.bindings]]
+name = "B044_PUT_AWAY"
+class_name = "B044PutAwayCoordinator"
+
+[[migrations]]
+tag = "b044-picking-v1"
+new_sqlite_classes = ["B044PutAwayCoordinator"]

@@ -51,6 +51,18 @@
   --client-b044-soft: #182c43;
   --client-b044-text: #f7fbff;
   --client-b044-soft-text: #bfd6ef;
+  --in-house-receiving: #285c46;
+  --in-house-receiving-soft: #1c3028;
+  --in-house-receiving-text: #f1faf5;
+  --in-house-receiving-soft-text: #bedccc;
+  --in-house-receiving-action: #2f8a62;
+  --in-house-receiving-action-hover: #277553;
+  --in-house-move: #43386f;
+  --in-house-move-soft: #28243d;
+  --in-house-move-text: #f5f2ff;
+  --in-house-move-soft-text: #d7cff5;
+  --in-house-move-action: #6f5bc4;
+  --in-house-move-action-hover: #604daf;
   --radius-small: 8px;
   --radius-medium: 13px;
   --radius-large: 17px;
@@ -119,4 +131,16 @@
   --client-b044-soft: #edf5fe;
   --client-b044-text: #1d4674;
   --client-b044-soft-text: #315f91;
+  --in-house-receiving: #d7eadf;
+  --in-house-receiving-soft: #edf6f0;
+  --in-house-receiving-text: #183c2c;
+  --in-house-receiving-soft-text: #326149;
+  --in-house-receiving-action: #287a55;
+  --in-house-receiving-action-hover: #206645;
+  --in-house-move: #ded8f3;
+  --in-house-move-soft: #f2effb;
+  --in-house-move-text: #30255f;
+  --in-house-move-soft-text: #55458a;
+  --in-house-move-action: #6048ad;
+  --in-house-move-action-hover: #503b96;
 }
