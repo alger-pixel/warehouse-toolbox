@@ -13,3 +13,10 @@ FEISHU_PICKING_LIST_TABLE_ID=tblRfLgo1jIQkzmi
 FEISHU_TOOL_TABLE_ID=tblNxCev7LS7uETW
 
 FEISHU_TINECO_TOC_UNIT_TABLE_ID=tblztQK3EhDAw2Wm
+
+# Worker-only OpenAI command simplifier. Leave blank for raw fallback. Never commit real keys.
+OPENAI_API_KEY=
+OPENAI_COMMAND_MODEL=
+
+# Temporary, server-controlled safe fallback diagnostics in responses. Disable after investigation.
+OPENAI_COMMAND_DIAGNOSTICS=false

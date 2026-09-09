@@ -4,5 +4,5 @@ export function warehouseTimestamp(value, timeZone = 'America/Toronto') {
 }
 
 export function formatB044Detail(job, timeZone) {
-  return [`PL NUMBER: ${job.pickingListNumber}`, 'CLIENT ID: B044', 'TOOL: B044 SCAN PUT AWAY', `CREATED: ${warehouseTimestamp(job.createdAt, timeZone)}`, `PACKAGE COUNT: ${job.rows.length}`, 'STATUS: CREATED', '', 'PACKAGES:', '', ...job.rows.map(row => `[${String(row.sequence).padStart(3, '0')}]\nSKU: ${row.trackingNumber}\nLOCATION: ${row.currentLocation}\nPUT AWAY SKU: ${row.finalSku}\nWAREHOUSE ORDER: ${row.warehouseInboundOrder}\n`)].join('\n');
+  return [`PL NUMBER: ${job.pickingListNumber}`, 'CLIENT ID: B044', 'TOOL: B044 SCAN PUT AWAY', `CREATED: ${warehouseTimestamp(job.createdAt, timeZone)}`, `PACKAGE COUNT: ${job.rows.length}`, 'STATUS: CREATED', '', 'PACKAGES:', '', ...job.rows.map(row => `[${String(row.sequence).padStart(3, '0')}]\nSKU: ${row.trackingNumber}\nLOCATION: ${row.currentLocation}\nPUT AWAY SKU: ${row.finalSku}\nWAREHOUSE ORDER: ${row.warehouseInboundOrder}\n${row.commandRaw?`COMMAND SNAPSHOT: ${JSON.stringify({commanded:true,commandRaw:row.commandRaw,commandDisplay:row.commandDisplay||row.commandRaw,commandReference:row.commandReference||''})}\n`:''}`)].join('\n');
 }

@@ -25,6 +25,7 @@
     validation: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/><circle cx="12" cy="12" r="9"/></svg>',
     quality: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>',
     parts: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v6m0 8v6M2 12h6m8 0h6"/><circle cx="12" cy="12" r="4"/></svg>',
+    repair: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6 4 4 3-3a7 7 0 0 1-9 9l-6 6-4-4 6-6a7 7 0 0 1 9-9Z"/></svg>',
     receiving: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 3l8 4.5V17l-8 4-8-4V7.5Z"/><path d="m4 7.5 8 4 8-4M12 11.5V21M8 5.3l8 4.2"/></svg>'
   };
 
@@ -135,16 +136,28 @@
   function renderClientTools() {
     const registry = window.MkiteClientToolRegistry, tools = registry.filter();
     const options = key => [...new Set(tools.map(t => t[key]))].sort().map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
-    mainContent.innerHTML = `<div class="client-library"><div class="page-header"><div><h2>Client Tools</h2><p>Find tools by warehouse and client.</p></div></div><form id="directory-form" class="client-directory-panel"><h3>CLIENT TOOL FILTERS</h3><div class="client-directory-filters"><label>WAREHOUSE<select id="directory-warehouse"><option value="">All Warehouses</option>${options('warehouse')}</select></label><label>CLIENT ID<select id="directory-client"><option value="">All Clients</option>${options('clientId')}</select></label><label>TOOL SEARCH<input id="directory-query" placeholder="Search name or Tool ID"></label></div><div class="client-directory-actions"><button class="button" type="submit">SEARCH TOOLS</button><button class="button button-neutral" type="button" id="directory-clear">CLEAR FILTERS</button></div></form><h3>AVAILABLE TOOLS</h3><div class="client-tool-grid" id="directory-results"></div></div>`;
+    const stats = [['Warehouses', new Set(tools.map(t => t.warehouse)).size], ['Clients', new Set(tools.map(t => t.clientId)).size], ['Tools', tools.length]];
+    mainContent.innerHTML = `<div class="client-library client-directory">
+      <section class="directory-hero" aria-labelledby="directory-title"><div class="directory-hero-copy"><h2 id="directory-title">CLIENT TOOLS</h2><p>Find the right tools for each client and warehouse.</p><dl class="directory-stats">${stats.map(([label, count]) => `<div><dt>${label}</dt><dd>${count}</dd></div>`).join('')}</dl></div><div class="directory-hero-visual"><p>People<br>Process<br>Possibility</p></div></section>
+      <form id="directory-form" class="client-directory-panel"><h3>Filter Tools</h3><p>Filter by warehouse, client or search for a specific tool.</p><div class="client-directory-filters"><label>Warehouse<select id="directory-warehouse"><option value="">All Warehouses</option>${options('warehouse')}</select></label><label>Client ID<select id="directory-client"><option value="">All Clients</option>${options('clientId')}</select></label><label>Tool Search<input id="directory-query" type="search" placeholder="Search name or Tool ID"></label><div class="client-directory-actions"><button class="button" type="submit">SEARCH TOOLS</button><button class="button button-neutral" type="button" id="directory-clear">CLEAR FILTERS</button></div></div></form>
+      <section aria-labelledby="directory-available"><div class="directory-section-heading"><h3 id="directory-available">Available Tools</h3><span id="directory-count" role="status"></span></div><div class="client-tool-grid" id="directory-results"></div></section></div>`;
     const warehouse = document.getElementById('directory-warehouse'), client = document.getElementById('directory-client'), query = document.getElementById('directory-query');
-    const update = () => { const matches = registry.filter({ warehouse: warehouse.value, clientId: client.value, query: query.value }); document.getElementById('directory-results').innerHTML = matches.length ? matches.map(clientToolCard).join('') : '<p>No tools found.</p>'; };
+    const update = () => { const matches = registry.filter({ warehouse: warehouse.value, clientId: client.value, query: query.value }); document.getElementById('directory-count').textContent = `${matches.length} ${matches.length === 1 ? 'tool' : 'tools'} found`; document.getElementById('directory-header-query').value = query.value; document.getElementById('directory-results').innerHTML = (matches.length ? matches.map(tool => clientToolCard(tool, true)).join('') : '<p class="directory-empty">No tools found. Try adjusting the filters.</p>') + '<div class="directory-coming-soon"><span aria-hidden="true">+</span><h4>More tools coming soon</h4><p>New client tools will appear here.</p></div>'; };
     document.getElementById('directory-form').addEventListener('submit', event => { event.preventDefault(); update(); });
+    const headerQuery = document.getElementById('directory-header-query');
+    headerQuery.oninput = () => { query.value = headerQuery.value; update(); };
+    document.getElementById('directory-header-form').onsubmit = event => { event.preventDefault(); query.value = headerQuery.value; update(); };
     [warehouse, client, query].forEach(input => input.addEventListener('input', update));
     document.getElementById('directory-clear').addEventListener('click', () => { warehouse.value = client.value = query.value = ''; update(); }); update();
   }
 
-  function clientToolCard(tool) {
+  function clientToolCard(tool, directory = false) {
     const active = tool.status === "active";
+    if (directory === true) {
+      const categoryIcons = { 'Inbound Operations': 'receiving', 'Production / Repair': 'repair', 'Inventory / Reporting': 'count' };
+      return `<button class="client-tool-card directory-tool-card" type="button" data-client-id="${escapeHtml(tool.clientId)}" data-client-tool-id="${escapeHtml(tool.route)}" data-warehouse="${escapeHtml(tool.warehouse)}" data-client-card-theme="${escapeHtml(tool.cardTheme || tool.theme || 'blue')}"${active ? '' : ' disabled'}><span class="directory-card-heading"><span class="client-tool-icon">${icons[categoryIcons[tool.category] || tool.icon] || icons.warehouse}</span><span class="client-tool-category">${escapeHtml(tool.category)}</span></span><span class="directory-card-body"><strong>${escapeHtml(tool.clientId)} - ${escapeHtml(tool.name)}</strong><span class="directory-card-description">${escapeHtml(tool.description || '')}</span><span class="directory-card-metadata"><span>Warehouse: ${escapeHtml(tool.warehouse)}</span><span>Client ID: ${escapeHtml(tool.clientId)}</span><span>Tool ID: ${escapeHtml(tool.toolId)}</span></span><span class="directory-card-action">OPEN TOOL ${icons.arrow}</span></span></button>`;
+    }
+
     const statusLabel = tool.status === "coming-soon" ? "Coming Soon" : tool.status === "disabled" ? "Disabled" : tool.version;
     return `<button class="client-tool-card" type="button" data-client-id="${escapeHtml(tool.clientId)}" data-client-tool-id="${escapeHtml(tool.route)}" data-warehouse="${escapeHtml(tool.warehouse)}" data-client-theme="${escapeHtml(tool.theme || tool.clientId)}" data-client-card-theme="${escapeHtml(tool.cardTheme || tool.theme || 'blue')}"${active ? "" : " disabled"}>
       <span class="client-tool-icon">${icons[tool.icon] || icons.warehouse}</span><span class="client-tool-copy"><span class="client-tool-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.clientId)} - ${escapeHtml(tool.name)}</strong><span>Tool ID: ${escapeHtml(tool.toolId)}</span><span>Warehouse: ${escapeHtml(tool.warehouse)} · Client ID: ${escapeHtml(tool.clientId)}</span><span>OPEN TOOL</span></span><span class="client-tool-version">${escapeHtml(statusLabel)}</span>${active ? `<span class="client-card-arrow">${icons.arrow}</span>` : ""}
@@ -240,7 +253,7 @@
   });
   themeToggle.addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
   collapseButton.addEventListener("click", () => setCollapsed(!appShell.classList.contains("is-collapsed")));
-  menuButton.addEventListener("click", () => { const open = appShell.classList.toggle("is-mobile-open"); menuButton.setAttribute("aria-expanded", String(open)); });
+  menuButton.addEventListener("click", () => { if (document.querySelector(".client-directory") && window.innerWidth > 767) { setCollapsed(!appShell.classList.contains("is-collapsed")); return; } const open = appShell.classList.toggle("is-mobile-open"); menuButton.setAttribute("aria-expanded", String(open)); });
   sidebarBackdrop.addEventListener("click", closeMobileMenu);
   document.getElementById("topbar-search").addEventListener("click", () => { window.MkiteRouter.navigate({ view: "tools" }); window.setTimeout(() => document.getElementById("tool-search")?.focus(), 0); });
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeMobileMenu(); if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) { event.preventDefault(); window.MkiteRouter.navigate({ view: "tools" }); window.setTimeout(() => document.getElementById("tool-search")?.focus(), 0); } });

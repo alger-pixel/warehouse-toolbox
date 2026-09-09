@@ -1,3 +1,4 @@
+import { handleCommandSimplifier } from './modules/ai/command-simplifier-controller.js';
 import { createTinecoInventoryService, handleTinecoInventory } from './modules/tineco-inventory/inventory-service.js';
 import { handleTineco } from './modules/tineco-toc/tineco-controller.js';
 export { TinecoTocCoordinator } from './modules/tineco-toc/tineco-coordinator.js';
@@ -18,8 +19,8 @@ import { allowedOrigins, corsHeaders, errorResponse, json } from "./utils/respon
 
 const MAX_BODY_BYTES = 16 * 1024;
 function requestId(request) { return request.headers.get("X-Request-ID") || crypto.randomUUID(); }
-function routeFor(pathname) { if (pathname === "/api/tineco-toc/inventory/search") return "tineco-inventory"; const tineco = pathname.match(/^\/api\/tineco-toc\/(begin|step|finish|cancel)$/); if (tineco) return "tineco-" + tineco[1]; if (pathname === "/api/inventory/search") return "inventory-search"; if (pathname === "/api/b044/put-away/cancel-picking-list") return "b044-cancel"; if (pathname === "/api/b044/put-away/prepare") return "b044-prepare"; if (pathname === "/api/b044/put-away/create-picking-list") return "b044-create"; if (pathname === "/api/b044/put-away/complete-package") return "b044-complete"; if (pathname === "/api/health") return "health"; if (pathname === "/api/clients/search") return "client-search"; if (pathname === "/api/clients") return "client-create"; if (pathname === "/api/receiving/lookup") return "lookup"; if (pathname === "/api/receiving") return "receive"; if (pathname === "/api/location-move/lookup") return "location-move-lookup"; if (pathname === "/api/location-move") return "location-move"; return "not-found"; }
-function methodAllowed(route, method) { return (route === "health" && method === "GET") || ((route.startsWith("tineco-") || ["inventory-search", "b044-prepare", "b044-create", "b044-complete", "b044-cancel", "client-search", "client-create", "lookup", "receive", "location-move-lookup", "location-move"].includes(route)) && method === "POST"); }
+function routeFor(pathname) { if (pathname === "/api/ai/simplify-command") return "ai-command"; if (pathname === "/api/tineco-toc/inventory/search") return "tineco-inventory"; const tineco = pathname.match(/^\/api\/tineco-toc\/(begin|step|finish|cancel)$/); if (tineco) return "tineco-" + tineco[1]; if (pathname === "/api/inventory/search") return "inventory-search"; if (pathname === "/api/b044/put-away/cancel-picking-list") return "b044-cancel"; if (pathname === "/api/b044/put-away/prepare") return "b044-prepare"; if (pathname === "/api/b044/put-away/create-picking-list") return "b044-create"; if (pathname === "/api/b044/put-away/complete-package") return "b044-complete"; if (pathname === "/api/health") return "health"; if (pathname === "/api/clients/search") return "client-search"; if (pathname === "/api/clients") return "client-create"; if (pathname === "/api/receiving/lookup") return "lookup"; if (pathname === "/api/receiving") return "receive"; if (pathname === "/api/location-move/lookup") return "location-move-lookup"; if (pathname === "/api/location-move") return "location-move"; return "not-found"; }
+function methodAllowed(route, method) { return (route === "health" && method === "GET") || ((route === "ai-command" || route.startsWith("tineco-") || ["inventory-search", "b044-prepare", "b044-create", "b044-complete", "b044-cancel", "client-search", "client-create", "lookup", "receive", "location-move-lookup", "location-move"].includes(route)) && method === "POST"); }
 async function readJson(request, limit = MAX_BODY_BYTES) {
   const declared = Number(request.headers.get("Content-Length") || 0); if (declared > limit) return { tooLarge: true };
   const text = await request.text(); if (new TextEncoder().encode(text).byteLength > limit) return { tooLarge: true };
@@ -40,6 +41,7 @@ export async function handleRequest(request, env) {
   if (parsed.tooLarge) return errorResponse(413, "PAYLOAD_TOO_LARGE", "Request body is too large.", false, id, request, env);
   if (parsed.invalid) return errorResponse(400, "INVALID_JSON", "Request body must be valid JSON.", false, id, request, env);
   try {
+    if (route === "ai-command") return await handleCommandSimplifier(parsed.body, env, id, request);
     const config = getFeishuConfig(env); const auth = createFeishuAuthService(config);
     const records = createFeishuRecordService(auth); let response;
     if (route === "tineco-inventory") response = await handleTinecoInventory(createTinecoInventoryService(config, records), parsed.body, id, request, env);

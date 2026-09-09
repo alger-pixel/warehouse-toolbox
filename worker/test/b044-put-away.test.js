@@ -396,3 +396,14 @@ test('different Excel identifiers resolving to one package are exceptions before
   await assert.rejects(f.service().create(input), error => error.code === 'NO_ELIGIBLE_PACKAGES');
   assert.equal(f.data.get('rec-ABC123').fields.STATUS, 'Active');
 });
+
+for(const simplified of [false,true])test(`command snapshot survives PL creation, retry and strict confirmation (${simplified?'AI':'fallback'})`,async()=>{
+ const f=fixture();const commandRaw='  原始说明 M8LS-14-BS\n无说明书需上报  ';
+ f.input.rows[0]={...f.input.rows[0],commandRaw,commandDisplay:simplified?'原始说明 M8LS-14-BS\n无说明书需上报':'',commandAiStatus:simplified?'SIMPLIFIED':'FAILED',commandReference:simplified?'REF-1':''};
+ const pl=await f.service().create(f.input);assert.equal(pl.operational,true);const row=pl.packages[0];assert.equal(row.commanded,true);assert.equal(row.commandRaw,commandRaw);assert.equal(row.commandDisplay,simplified?f.input.rows[0].commandDisplay:commandRaw);
+ const detail=f.data.get('pl-master').fields['PICKING LIST DETAIL'];const snapshot=JSON.parse(detail.split('COMMAND SNAPSHOT: ')[1].split('\n')[0]);assert.equal(snapshot.commandRaw,commandRaw);assert.equal(snapshot.commandDisplay,row.commandDisplay);
+ assert.equal((await f.service().create(f.input)).packages[0].commandRaw,commandRaw);
+ await assert.rejects(f.service().complete({pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:row.packageRecordId,trackingNumber:row.trackingNumber,confirmationTracking:'WRAP'+row.trackingNumber}),e=>e.code==='WRONG_PACKAGE_CONFIRMATION');
+ assert.equal((await f.service().complete({pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:row.packageRecordId,trackingNumber:row.trackingNumber,confirmationTracking:row.trackingNumber})).pickingListComplete,true);
+ assert.ok(f.events.filter(e=>e.fields&&e.recordId===row.packageRecordId).every(e=>Object.keys(e.fields).every(k=>['STATUS','NOTE'].includes(k))));
+});

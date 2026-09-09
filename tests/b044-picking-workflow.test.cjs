@@ -289,3 +289,117 @@ test('partial cancellation clears pending print confirmation and displays author
   assert.equal(printed.length, 6); assert.equal(printed[0].trackingNumber, '875539379028');
   assert.ok(printed.every(row => row.eligibility === 'ELIGIBLE'));
 });
+
+for(const dateHeader of ['到仓日期','登记时间'])test(`${dateHeader} and optional 操作指令 preserve source command text`,()=>{
+ const h=setup(),XLSX=require('../vendor/xlsx.full.min.js');h.window.XLSX=XLSX;
+ for(const command of [undefined,'   ','  补螺栓 <原样>\nM8LS-14-BS  ']){
+ const headers=[dateHeader,'跟踪号','入库SKU','仓库入库单号',...(command===undefined?[]:['操作指令'])];
+ const parsed=h.tool.parseWorksheet(XLSX.utils.aoa_to_sheet([headers,['2026-09-09','TRACK','SKU','RMAB044-1',command]]));
+ assert.equal(parsed.missingHeaders.length,0);assert.equal(parsed.packages[0].arrivalDate,'2026-09-09');
+ assert.equal(parsed.packages[0].commandRaw,command?.trim()?command:'');assert.equal(parsed.packages[0].commanded,Boolean(command?.trim()));
+ assert.equal(parsed.packages[0].commandAiStatus,command?.trim()?'PENDING':'NOT_REQUIRED');
+ }
+});
+test('populated 登记时间 wins; blank 登记时间 falls back to 到仓日期',()=>{
+ const h=setup(),XLSX=require('../vendor/xlsx.full.min.js');h.window.XLSX=XLSX;
+ const p=h.tool.parseWorksheet(XLSX.utils.aoa_to_sheet([['到仓日期','登记时间','跟踪号','入库SKU','仓库入库单号'],['2026-09-01','2026-09-09','A','SKU','RMAB044-1'],['2026-09-02','','B','SKU','RMAB044-1']]));
+ assert.deepEqual(Array.from(p.packages,r=>r.arrivalDate),['2026-09-09','2026-09-02']);
+});
+test('command preparation deduplicates, caches across remount, and falls back without blocking inventory',async()=>{
+ const h=setup(),state=h.tool.getState();state.pl=null;state.packages=Array.from({length:20},(_,i)=>({id:'row-'+i,commandRaw:'  补说明书  ',commandAiStatus:'PENDING'}));
+ let calls=0;h.window.MkiteApiClient={post:async()=>{calls++;return {ok:true,data:{commandDisplay:'补说明书',commandAiStatus:'SIMPLIFIED',commandReference:'REF-1'}};}};
+ await h.tool.prepareCommands();assert.equal(calls,1);assert.ok(state.packages.every(r=>r.commandRaw==='  补说明书  '&&r.commandDisplay==='补说明书'));
+ h.module.cleanup();h.module.init(h.context);await h.tool.prepareCommands();assert.equal(calls,1);
+ h.tool.getState().packages.push({id:'other',commandRaw:'不同指令'});h.window.MkiteApiClient.post=async()=>{throw Error('offline');};
+ h.window.MkiteB044Picking.prepare=async({rows})=>({packages:rows,eligible:rows,exceptions:[]});
+ await h.tool.prepareInventory();assert.equal(h.tool.getState().prepared.eligible.length,21);assert.equal(h.tool.getState().packages.at(-1).commandDisplay,'不同指令');assert.equal(h.tool.getState().packages.at(-1).commandAiStatus,'FALLBACK');
+});
+test('command preparation caps unique calls and concurrency; successful cache entries are not retried',async()=>{
+ const h=setup(),state=h.tool.getState();state.pl=null;state.packages=Array.from({length:15},(_,i)=>({commandRaw:'command-'+i}));
+ let calls=0,active=0,max=0;h.window.MkiteApiClient={post:async(_,body)=>{calls++;max=Math.max(max,++active);await new Promise(resolve=>setImmediate(resolve));active--;return {ok:true,data:{commandAiStatus:'SIMPLIFIED',commandDisplay:body.command}};}};
+ await h.tool.prepareCommands();assert.equal(calls,10);assert.equal(max,2);assert.equal(state.packages.filter(r=>r.commandAiStatus==='FALLBACK').length,5);
+ await h.tool.prepareCommands();assert.equal(calls,10);await h.tool.prepareCommands(true);assert.equal(calls,15);
+});
+test('normal prints one page; commanded prints original then safe command pages and one strict confirmation',async()=>{
+ const h=setup(),row=h.tool.currentQueue()[0];
+ assert.equal((h.tool.packageLabels(row,false).match(/<article/g)||[]).length,1);
+ Object.assign(row,{commandRaw:'<script>原始</script>',commandDisplay:'补说明书',commandReference:'REF-1'});
+ const html=h.tool.packageLabels(row,false);assert.equal((html.match(/<article/g)||[]).length,2);assert.ok(html.indexOf('pas-label-section')<html.indexOf('pas-command-label'));assert.match(html,/COMMAND/);assert.match(html,/TRACKING:<\/dt><dd>TRACK1/);assert.match(html.replace(/<[^>]+>/g,'').replace(/\s/g,''),/REF:REF-1/);
+ row.commandDisplay='';assert.match(h.tool.packageLabels(row,false),/&lt;script/);assert.doesNotMatch(h.tool.packageLabels(row,false),/<script>/);
+ h.tool.openScanMode();await h.tool.processScan('TRACK1');assert.equal(row.printCount,1);assert.equal(h.calls.length,0);
+ await h.tool.processScan('PREFIX-TRACK1');assert.equal(h.calls.length,0);await h.tool.processScan('TRACK1');assert.equal(h.calls.length,1);assert.equal(h.tool.getState().pendingPackageId,null);
+});
+test('long command continues at readable font sizes without dropping text; preview shows page count',()=>{
+ const h=setup(),row=h.tool.currentQueue()[0];row.commandRaw='中'.repeat(800)+'END';
+ const pages=h.tool.commandPages(row);assert.ok(pages.length>1);assert.ok(pages.every(p=>p.size>=20));assert.equal(pages.map(p=>p.text.replace(/\n/g,'')).join(''),row.commandRaw);
+ assert.match(h.tool.commandLabelMarkup(row,false),/COMMAND 1\//);h.tool.renderPreview();assert.match(h.root.innerHTML,/Package Label \+ Command Label/);
+ const css=fs.readFileSync('css/client-tools/b044-put-away-scan.css','utf8');assert.match(css,/pas-label\.pas-command-label[^}]*overflow:visible/);
+});
+test('A4 commanded rows display organized or raw text safely and exclude exceptions',()=>{
+ const window={};vm.runInNewContext(fs.readFileSync('js/client-tools/b044/picking-workflow.js','utf8'),{window,document:{}});
+ const row={sequence:1,commandRaw:'<raw>&',commandDisplay:'organized',trackingNumber:'TRACK',commandReference:'REF-1'};
+ const pl={packages:[row],exceptions:[{commandRaw:'DO NOT PRINT EXCEPTION'}],operational:true};
+ let html=window.MkiteB044Picking.a4Markup(pl);assert.match(html,/class="commanded"/);assert.match(html,/COMMANDED/);assert.match(html,/organized/);assert.match(html,/REF-1/);assert.doesNotMatch(html,/DO NOT PRINT EXCEPTION/);
+ row.commandDisplay='';html=window.MkiteB044Picking.a4Markup(pl);assert.match(html,/&lt;raw&gt;&amp;/);assert.doesNotMatch(html,/<raw>/);
+});
+
+test('long A4 commands use compact row plus complete printable appendix',()=>{
+ const window={};vm.runInNewContext(fs.readFileSync('js/client-tools/b044/picking-workflow.js','utf8'),{window,document:{}});
+ const raw='完整原始操作'.repeat(200)+'LAST REQUIREMENT';
+ const html=window.MkiteB044Picking.a4Markup({packages:[{sequence:1,commandRaw:raw}],exceptions:[],operational:true});
+ assert.match(html,/CONTINUED IN COMMAND APPENDIX/);assert.match(html,/class="command-appendix"/);assert.ok(html.includes(raw));
+});
+
+test('AI preparation summary separates counts, completion, review note and optional retry',()=>{
+ const h=setup(),state=h.tool.getState();state.pl=null;
+ state.packages=['SIMPLIFIED','SIMPLIFIED','FALLBACK','PENDING','FAILED'].map(commandAiStatus=>({commandRaw:'command',commandAiStatus}));
+ let html=h.tool.commandSummary();
+ for(const [label,count] of [['COMMAND PACKAGES',5],['Simplified',2],['Raw Fallback',1],['Pending',1],['Failed / Retryable',1]])assert.ok(html.includes(`<dt>${label}</dt><dd>${count}</dd>`));
+ assert.match(html,/Processing commands/);assert.match(html,/AI-organized instructions should be reviewed before printing/);assert.match(html,/generate the Picking List without retrying/);assert.match(html,/RETRY COMMAND SIMPLIFICATION/);
+ state.packages.forEach(r=>r.commandAiStatus='SIMPLIFIED');html=h.tool.commandSummary();assert.match(html,/is-complete/);assert.doesNotMatch(html,/id="pas-retry-commands"/);
+ state.packages[0].commandAiStatus='FALLBACK';html=h.tool.commandSummary();assert.match(html,/Complete — raw instructions retained/);assert.match(html,/id="pas-retry-commands"/);
+ state.creationRequestId='existing';assert.doesNotMatch(h.tool.commandSummary(),/id="pas-retry-commands"/);
+});
+test('explicit command retry calls only FAILED/FALLBACK and displays pending during request',async()=>{
+ const h=setup(),state=h.tool.getState();state.pl=null;
+ state.packages=['SIMPLIFIED','FALLBACK','FAILED','PENDING'].map((commandAiStatus,i)=>({commandRaw:'command-'+i,commandAiStatus}));
+ state.commandCache=state.packages.slice(0,3).map(r=>[r.commandRaw,{commandAiStatus:r.commandAiStatus,commandDisplay:r.commandRaw}]);
+ const calls=[];h.window.MkiteApiClient={post:async(_,body)=>{calls.push(body.command);assert.match(h.tool.commandSummary(),/Processing commands/);return {ok:true,data:{commandAiStatus:'SIMPLIFIED',commandDisplay:body.command}};}};
+ await h.tool.prepareCommands(true);assert.deepEqual(calls.sort(),['command-1','command-2']);assert.equal(state.packages[3].commandAiStatus,'PENDING');assert.equal(state.packages[0].commandAiStatus,'SIMPLIFIED');
+});
+test('captioned command preview lists every label in package-first order without altering print markup',()=>{
+ const h=setup(),row=h.tool.currentQueue()[0];row.commandRaw='补说明书'.repeat(120);row.commandReference='FD-B044-260908-0001';
+ const pages=h.tool.commandPages(row).length,preview=h.tool.packageLabels(row,true),print=h.tool.packageLabels(row,false);
+ assert.equal((preview.match(/<figcaption>Package Label/g)||[]).length,1);assert.equal((preview.match(/<figcaption>Command Label/g)||[]).length,pages);assert.ok(preview.indexOf('Package Label')<preview.indexOf('Command Label'));
+ assert.doesNotMatch(print,/<figure|<figcaption/);assert.equal((print.match(/<article/g)||[]).length,pages+1);assert.match(print,/TRACKING:<\/dt><dd>TRACK1/);
+});
+
+test('command label repeats bold tracking and warehouse order in every fixed 4x6 continuation',()=>{
+ const h=setup(),row={...h.tool.currentQueue()[0],trackingNumber:'1ZR09J502019436973',warehouseInboundOrder:'RMAB044-260902-0002',commandRaw:'补螺栓+补说明书\n'.repeat(60),commandReference:'FD-B044-260902-0001'};
+ const pages=h.tool.commandPages(row),html=h.tool.commandLabelMarkup(row,false);assert.ok(pages.length>1);
+ assert.equal((html.match(/class="pas-label pas-command-label"/g)||[]).length,pages.length);
+ assert.equal((html.match(/1ZR09J502019436973/g)||[]).length,pages.length);assert.equal((html.match(/RMAB044-260902-0002/g)||[]).length,pages.length);
+ assert.ok(html.indexOf('COMMAND 1/')<html.indexOf('TRACKING:'));assert.ok(html.indexOf('WAREHOUSE ORDER:')<html.indexOf('pas-command-content'));
+ assert.ok(pages.every(p=>p.size>=20));assert.equal(pages.map(p=>p.reference).filter(Boolean).join(''),'FD-B044-260902-0001');
+ const css=fs.readFileSync('css/client-tools/b044-put-away-scan.css','utf8');assert.match(css,/\.pas-label\.pas-command-label \{[^}]*width:4in; height:6in/);assert.match(css,/\.pas-label\.pas-command-label\.is-preview \{[^}]*width:4in; height:6in; aspect-ratio:2\/3/);assert.match(css,/body\.pas-printing \.pas-command-label \{[^}]*width:4in; height:6in/);
+});
+test('mixed-language command keeps common model and reference codes intact with separate REF section',()=>{
+ const h=setup(),row={trackingNumber:'TRACK',warehouseInboundOrder:'ORDER',commandRaw:'原文',commandDisplay:'换箱CARTON-405-250-295\n补螺栓+补说明书\nM8LS-14-BS',commandReference:'FD-B044-260902-0001'};
+ const pages=h.tool.commandPages(row),html=h.tool.commandLabelMarkup(row,false);
+ for(const code of ['CARTON-405-250-295','M8LS-14-BS'])assert.ok(pages.some(p=>p.text.includes(code)),code);
+ assert.ok(pages.some(p=>p.reference==='FD-B044-260902-0001'));assert.match(html,/class="pas-command-reference"/);assert.doesNotMatch(pages.map(p=>p.text).join(''),/FD-B044/);
+ delete row.commandReference;assert.doesNotMatch(h.tool.commandLabelMarkup(row,false),/pas-command-reference|REF:/);
+ row.commandDisplay='';row.commandRaw='<换箱>&"';assert.match(h.tool.commandLabelMarkup(row,false),/&lt;换箱&gt;&amp;&quot;/);assert.doesNotMatch(h.tool.commandLabelMarkup(row,false),/<换箱>/);
+});
+test('short command stays very large and common codes have no forced hyphen fragments',()=>{
+ const h=setup();assert.equal(h.tool.commandPages({commandRaw:'换箱'})[0].size,30);
+ for(const code of ['CARTON-405-250-295','M8LS-14-BS','FD-B044-260908-0001']){
+  const pages=h.tool.commandPages({commandRaw:'换箱'+code});assert.ok(pages.some(p=>p.text.includes(code)));assert.ok(pages.every(p=>p.size>=20));
+ }
+ const css=fs.readFileSync('css/client-tools/b044-put-away-scan.css','utf8');assert.match(css,/\.pas-command-content pre \{[^}]*overflow-wrap:break-word; word-break:normal/);assert.doesNotMatch(css,/\.pas-command[^}]*break-all/);
+});
+test('normal label stays byte-identical as first label of a commanded package',()=>{
+ const h=setup(),row={...h.tool.currentQueue()[0],warehouseInboundOrder:'RMAB044-260902-0002'};
+ const normal=h.tool.packageLabels(row,false),commanded=h.tool.packageLabels({...row,commandRaw:'换箱'},false);
+ assert.equal(commanded.slice(0,normal.length),normal);assert.equal((normal.match(/<article/g)||[]).length,1);assert.match(commanded.slice(normal.length),/pas-command-label/);
+});

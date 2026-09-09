@@ -6,7 +6,7 @@
   const REQUIRED_HEADERS = ["到仓日期", "跟踪号", "入库SKU", "仓库入库单号"];
   const SUPPORTED_ORDER_PREFIXES = ["RMA", "RV"].sort((a, b) => b.length - a.length);
   const STATUS = { NOT_PRINTED: "NOT PRINTED", PRINTED: "PRINTED", REPRINTED: "REPRINTED" };
-  const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, pendingPackageId: null, pendingConfirmationTracking: null, creationRequestId: null });
+  const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, commandCache: [], pendingPackageId: null, pendingConfirmationTracking: null, creationRequestId: null });
   let context = null;
   let state = emptySession();
   let operationBusy = false; let lifecycle = 0;
@@ -61,18 +61,18 @@
       const found = {};
       for (let col = range.s.c; col <= range.e.c; col += 1) {
         const heading = cellText(sheet[window.XLSX.utils.encode_cell({ r: row, c: col })]);
-        if (REQUIRED_HEADERS.includes(heading)) found[heading] = col;
+        if ([...REQUIRED_HEADERS, "登记时间", "操作指令"].includes(heading)) found[heading] = col;
       }
       if (Object.keys(found).length) { headerRow = row; Object.assign(columns, found); break; }
     }
-    const missingHeaders = REQUIRED_HEADERS.filter((heading) => columns[heading] == null);
+    const missingHeaders = REQUIRED_HEADERS.filter((heading) => columns[heading] == null && !(heading === "到仓日期" && columns["登记时间"] != null));
     if (headerRow < 0 || missingHeaders.length) return { missingHeaders, totalRows: 0, packages: [], invalidRows: [] };
 
     const provisional = []; const invalidRows = []; let totalRows = 0;
     for (let row = headerRow + 1; row <= range.e.r; row += 1) {
       const cells = {};
-      REQUIRED_HEADERS.forEach((heading) => { cells[heading] = sheet[window.XLSX.utils.encode_cell({ r: row, c: columns[heading] })]; });
-      const arrivalDate = normalizeDate(cells["到仓日期"]);
+      Object.keys(columns).forEach((heading) => { cells[heading] = sheet[window.XLSX.utils.encode_cell({ r: row, c: columns[heading] })]; });
+      const arrivalDate = normalizeDate(cellText(cells["登记时间"]) ? cells["登记时间"] : cells["到仓日期"]);
       const trackingNumber = cellText(cells["跟踪号"]);
       const inboundSku = cellText(cells["入库SKU"]);
       const warehouseInboundOrder = cellText(cells["仓库入库单号"]);
@@ -85,7 +85,9 @@
       if (!warehouseInboundOrder) reasons.push("MISSING WAREHOUSE ORDER");
       const order = warehouseInboundOrder ? parseOrderNumber(warehouseInboundOrder) : { valid: false };
       if (warehouseInboundOrder && !order.valid) reasons.push(order.reason);
-      const record = { id: `row-${row + 1}`, excelRow: row + 1, arrivalDate, trackingNumber, normalizedTracking: normalize(trackingNumber), inboundSku, warehouseInboundOrder, prefix: order.prefix || "", clientId: order.clientId || "", finalSku: order.valid && inboundSku ? `${order.clientId}-${inboundSku}` : "", printStatus: STATUS.NOT_PRINTED, printCount: 0, lastPrintedAt: null };
+      const originalCommand = String(cells["操作指令"]?.v ?? "");
+      const commandRaw = originalCommand.trim() ? originalCommand : "";
+      const record = { commanded:Boolean(commandRaw), commandRaw, commandDisplay:commandRaw, commandAiStatus:commandRaw?'PENDING':'NOT_REQUIRED', commandAiSource:commandRaw?'RAW_FALLBACK':'NONE', id: `row-${row + 1}`, excelRow: row + 1, arrivalDate, trackingNumber, normalizedTracking: normalize(trackingNumber), inboundSku, warehouseInboundOrder, prefix: order.prefix || "", clientId: order.clientId || "", finalSku: order.valid && inboundSku ? `${order.clientId}-${inboundSku}` : "", printStatus: STATUS.NOT_PRINTED, printCount: 0, lastPrintedAt: null };
       if (reasons.length) invalidRows.push({ ...record, reasons }); else provisional.push(record);
     }
     const counts = provisional.reduce((map, item) => map.set(item.normalizedTracking, (map.get(item.normalizedTracking) || 0) + 1), new Map());
@@ -120,6 +122,97 @@
   }
   function labelMarkup(item, preview) {
     return `<article class="pas-label${preview ? " is-preview" : ""}"><header><div><span>到仓日期</span><strong>${esc(item.arrivalDate)}</strong></div><div><span>跟踪号</span><strong>${esc(item.trackingNumber)}</strong></div></header><section class="pas-label-section"><h3>SKU</h3><div class="pas-qr">${qrSvg(item.finalSku)}</div><strong>${esc(item.finalSku)}</strong></section><section class="pas-label-section"><h3>仓库入库单号</h3><div class="pas-qr">${qrSvg(item.warehouseInboundOrder)}</div><strong>${esc(item.warehouseInboundOrder)}</strong></section></article>`;
+  }
+
+  // Layout in points: 4x6 inches, with the same .19in inset as the package label.
+  // Canvas measures the actual bold font where available; tests use a conservative estimate.
+  let commandMeasure;
+  function commandTextWidth(value,size){
+    if(commandMeasure===undefined){try{commandMeasure=document.createElement('canvas').getContext('2d');}catch{commandMeasure=null;}}
+    if(commandMeasure){commandMeasure.font=`700 ${size}px Arial`;return commandMeasure.measureText(value).width;}
+    return Array.from(value).reduce((n,c)=>n+(c.charCodeAt(0)>255?1:/[MW@#]/.test(c)?.95:.65),0)*size;
+  }
+  function commandWrap(value,size){
+    const width=254; // Slight reserve inside the 260.64pt content width.
+    return String(value).replace(/\r\n?/g,'\n').split('\n').flatMap(paragraph=>{
+      const tokens=paragraph.replace(/\t/g,'    ').match(/[A-Za-z0-9]+(?:[A-Za-z0-9_./@#+()-]*[A-Za-z0-9])?| +|[^]/gu)||[''];
+      const lines=[];let line='';
+      for(const token of tokens){
+        if(line&&commandTextWidth(line+token,size)>width){lines.push(line);line='';}
+        if(commandTextWidth(token,size)<=width){line+=token;continue;}
+        // Exceptionally long unbroken tokens cannot fit even at 20pt: wrap, never clip.
+        for(const c of Array.from(token)){if(line&&commandTextWidth(line+c,size)>width){lines.push(line);line='';}line+=c;}
+      }
+      lines.push(line);return lines;
+    });
+  }
+  function commandPages(item) {
+    if (!text(item.commandRaw)) return [];
+    const content=String(item.commandDisplay||item.commandRaw),reference=String(item.commandReference||'');
+    let size=content.length+reference.length<=40?30:content.length+reference.length<=100?24:20;
+    const codes=(content+' '+reference).match(/[A-Za-z0-9][A-Za-z0-9_./@#+()-]*/g)||[];
+    while(size>20&&codes.some(code=>commandTextWidth(code,size)>254))size=size===30?24:20;
+    let identitySize=14;
+    const identityLines=()=>commandWrap(item.trackingNumber||'',identitySize).length+commandWrap(item.warehouseInboundOrder||'',identitySize).length;
+    if(identityLines()>8)identitySize=12;
+    if(identityLines()>12)identitySize=10;
+    const tracking=commandWrap(item.trackingNumber||'',identitySize).join('\n'),order=commandWrap(item.warehouseInboundOrder||'',identitySize).join('\n');
+    // Heading 38pt + labels/gaps/rule 48pt + identity lines; reserve another 12pt.
+    const available=404.64-38-48-identityLines()*identitySize*1.15-12;
+    while(size>20&&available<(reference?2:1)*size*1.15)size=size===30?24:20;
+    const capacity=Math.max(reference?2:1,Math.floor(available/(size*1.15)));
+    const pages=[];let page={text:'',reference:'',size,identitySize,tracking,order},used=0;
+    const push=()=>{pages.push(page);page={text:'',reference:'',size,identitySize,tracking,order};used=0;};
+    for(const line of commandWrap(content,size)){if(used>=capacity)push();page.text+=(used?'\n':'')+line;used++;}
+    if(reference){
+      for(const line of commandWrap(reference,size)){
+        // REF heading consumes one line on each page containing a reference.
+        if(used+(page.reference?1:2)>capacity)push();
+        if(!page.reference)used++;
+        page.reference+=(page.reference?'\n':'')+line;used++;
+      }
+    }
+    if(used)push();return pages;
+  }
+  function commandLabelMarkup(item, preview) {
+    const pages=commandPages(item);
+    return pages.map((page,i)=>`${preview?`<figure class="pas-label-preview"><figcaption>Command Label${pages.length>1?' '+(i+1)+'/'+pages.length:''}</figcaption>`:''}<article class="pas-label pas-command-label${preview?' is-preview':''}"><h2>COMMAND${pages.length>1?' '+(i+1)+'/'+pages.length:''}</h2><dl class="pas-command-identity" style="--command-identity-size:${page.identitySize}pt"><div><dt>跟踪号 / TRACKING:</dt><dd>${esc(page.tracking)}</dd></div><div><dt>入库单号 / WAREHOUSE ORDER:</dt><dd>${esc(page.order)}</dd></div></dl><div class="pas-command-content" style="font-size:${page.size}pt">${page.text?`<pre>${esc(page.text)}</pre>`:''}${page.reference?`<section class="pas-command-reference"><strong>REF:</strong><pre>${esc(page.reference)}</pre></section>`:''}</div></article>${preview?'</figure>':''}`).join('');
+  }
+  function packageLabels(item,preview) { const original=labelMarkup(item,preview);return (preview?`<figure class="pas-label-preview"><figcaption>Package Label</figcaption>${original}</figure>`:original)+commandLabelMarkup(item,preview); }
+  async function prepareCommands(retry=false) {
+    const session=state,run=lifecycle;
+    session.commandCache ||= [];
+    const cache=new Map(session.commandCache), groups=new Map();
+    for(const row of session.packages) if(text(row.commandRaw)) {
+      const key=text(row.commandRaw); if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);
+    }
+    const pending=[...groups].filter(([key,rows])=>retry?['FAILED','FALLBACK'].includes(cache.get(key)?.commandAiStatus||rows[0].commandAiStatus):!cache.has(key)).slice(0,10);
+    for(const [,rows] of pending)for(const row of rows)row.commandAiStatus='PENDING';
+    if(pending.length){save();renderSetup();}
+    let cursor=0;
+    async function worker(){while(cursor<pending.length){const [key,rows]=pending[cursor++];let result;let timer;
+      try{
+        const response=await Promise.race([window.MkiteApiClient.post('/api/ai/simplify-command',{command:rows[0].commandRaw}),new Promise((_,reject)=>{timer=window.setTimeout(()=>reject(Error('timeout')),10000);})]);
+        if(response.ok&&response.data?.commandAiStatus==='SIMPLIFIED'&&typeof response.data.commandDisplay==='string'&&response.data.commandDisplay.trim())result={commandDisplay:response.data.commandDisplay,commandReference:typeof response.data.commandReference==='string'?response.data.commandReference:'',commandAiStatus:'SIMPLIFIED',commandAiSource:'AI'};
+      }catch{}finally{window.clearTimeout?.(timer);}
+      if(!context||run!==lifecycle||state!==session)return;
+      cache.set(key,result||{commandAiStatus:'FALLBACK',commandAiSource:'RAW_FALLBACK'});session.commandCache=[...cache];
+      for(const row of rows)Object.assign(row,cache.get(key),{commandDisplay:result?.commandDisplay||row.commandRaw});save();renderSetup();
+    }}
+    await Promise.all([worker(),worker()]);
+    if(!context||run!==lifecycle||state!==session)return;
+    for(const [key,rows] of groups){if(retry&&!cache.has(key))continue;if(!cache.has(key))cache.set(key,{commandAiStatus:'FALLBACK',commandAiSource:'RAW_FALLBACK'});for(const row of rows)Object.assign(row,cache.get(key),{commandDisplay:cache.get(key).commandDisplay||row.commandRaw});}
+    session.commandCache=[...cache];save();
+  }
+  async function retryCommands(){if(operationBusy||state.creationRequestId)return;const run=lifecycle;operationBusy=true;renderSetup();try{await prepareCommands(true);if(context&&run===lifecycle){state.prepared=null;}}finally{if(context&&run===lifecycle){operationBusy=false;renderSetup();prepareInventory();}}}
+  function commandSummary(){
+    const rows=state.packages.filter(r=>text(r.commandRaw));if(!rows.length)return '';
+    const simplified=rows.filter(r=>r.commandAiStatus==='SIMPLIFIED').length;
+    const fallback=rows.filter(r=>r.commandAiStatus==='FALLBACK').length;
+    const failed=rows.filter(r=>r.commandAiStatus==='FAILED').length;
+    const pending=rows.length-simplified-fallback-failed;
+    const complete=!pending&&!failed;
+    return `<section class="pas-command-summary ${complete?'is-complete':failed?'is-retryable':'is-pending'}" aria-label="AI command preparation"><div class="pas-command-summary-heading"><strong>AI COMMAND PREPARATION</strong><span>${pending?'Processing commands…':failed?'Retry available — raw instructions retained':fallback?'Complete — raw instructions retained':'Complete'}</span></div><dl>${[['COMMAND PACKAGES',rows.length],['Simplified',simplified],['Raw Fallback',fallback],['Pending',pending],['Failed / Retryable',failed]].map(([label,count])=>`<div><dt>${label}</dt><dd>${count}</dd></div>`).join('')}</dl><p>AI-organized instructions should be reviewed before printing.</p>${fallback||failed?'<p>Raw instructions remain available. You can generate the Picking List without retrying.</p>':''}${!state.creationRequestId&&(fallback||failed)?`<button class="button button-neutral" id="pas-retry-commands" ${operationBusy?'disabled':''}>RETRY COMMAND SIMPLIFICATION</button>`:''}</section>`;
   }
 
   function render() { return '<div class="pas-app" data-client-theme="blue" id="pas-app"></div>'; }
@@ -159,6 +252,7 @@
   }
 
   function bindSetup() {
+    document.getElementById("pas-retry-commands")?.addEventListener("click", retryCommands);
     document.getElementById("pas-prepare")?.addEventListener("click", prepareInventory);
     document.getElementById("pas-create-pl")?.addEventListener("click", createPickingList);
     document.getElementById("pas-export-exceptions")?.addEventListener("click", () => window.MkiteB044Picking.exportExceptions(state.prepared.exceptions));
@@ -233,7 +327,7 @@
   function renderPreview() {
     if (!currentQueue().length || operationBusy) return;
     previewOpen = true;
-    context.root.innerHTML = `<div class="pas-preview-page"><div class="pas-preview-header"><div><span class="tool-kicker">B044 · Put Away Scan</span><h3>Label Preview</h3><p>${currentQueue().length} labels generated</p></div><div><button class="button button-secondary" id="pas-preview-back" type="button">Back to Put Away Scan</button><button class="button button-primary" id="pas-preview-print" type="button">PRINT FOUND PACKAGES</button></div></div><div class="pas-preview-grid">${currentQueue().map((item) => labelMarkup(item, true)).join("")}</div></div>`;
+    context.root.innerHTML = `<div class="pas-preview-page"><div class="pas-preview-header"><div><span class="tool-kicker">B044 · Put Away Scan</span><h3>Label Preview</h3><p>${currentQueue().length} packages · ${currentQueue().reduce((n,item)=>n+1+commandPages(item).length,0)} label pages (Package Label + Command Label for commanded packages)</p></div><div><button class="button button-secondary" id="pas-preview-back" type="button">Back to Put Away Scan</button><button class="button button-primary" id="pas-preview-print" type="button">PRINT FOUND PACKAGES</button></div></div><div class="pas-preview-grid">${currentQueue().map((item) => packageLabels(item, true)).join("")}</div></div>`;
     document.getElementById("pas-preview-back").addEventListener("click", renderSetup);
     document.getElementById("pas-preview-print").addEventListener("click", printBatchWithDialog);
   }
@@ -247,7 +341,7 @@
     renderPrintDom(items) {
       let host = document.getElementById("pas-print-host");
       if (!host) { host = document.createElement("div"); host.id = "pas-print-host"; document.body.appendChild(host); }
-      host.innerHTML = items.map((item) => labelMarkup(item, false)).join("");
+      host.innerHTML = items.map((item) => packageLabels(item, false)).join("");
       document.body.classList.add("pas-printing");
       return host;
     },
@@ -353,7 +447,7 @@
     const prepared = state.prepared, pl = state.pl;
     const created = Boolean(pl?.pickingListRecordId), cancelled = pl?.phase === 'cancelled';
     const lifecycleStatus = cancelled ? 'PICKING LIST CANCELLED' : pl?.operational ? 'PICKING LIST CREATED' : prepared?.eligible.length && !state.creationRequestId ? 'READY TO GENERATE' : 'PREPARING';
-    return `<section class="pas-picking-panel panel" aria-live="polite"><h3>${lifecycleStatus}</h3><p>${operationBusy ? 'Working — keep this session open…' : esc(state.workflowError || (!cancelled && pl?.message) || (pl?.operational ? 'Picking List ready for warehouse scanning.' : cancelled ? `${pl.processingReturnedToActive || 0} unfinished packages returned to Active. ${pl.processedRetained || 0} completed packages remain Processed. ${pl.skipped || 0} packages skipped due to unexpected status. Reset the page to prepare a new Picking List.` : 'Upload and matching are read-only. Generate explicitly to assign eligible packages.'))}</p>
+    return `<section class="pas-picking-panel panel" aria-live="polite"><h3>${lifecycleStatus}</h3>${commandSummary()}<p>${operationBusy ? 'Working — keep this session open…' : esc(state.workflowError || (!cancelled && pl?.message) || (pl?.operational ? 'Picking List ready for warehouse scanning.' : cancelled ? `${pl.processingReturnedToActive || 0} unfinished packages returned to Active. ${pl.processedRetained || 0} completed packages remain Processed. ${pl.skipped || 0} packages skipped due to unexpected status. Reset the page to prepare a new Picking List.` : 'Upload and matching are read-only. Generate explicitly to assign eligible packages.'))}</p>
       ${pl ? `<p><strong>${esc(pl.pickingListNumber)}</strong> · ${pl.succeeded.length} / ${pl.packages.length} ASSIGNED${pl.createdAt ? ` · Created ${esc(pl.createdAt)}` : ''}</p>${pl.failed.map(r => `<p class="pas-confirm-error">${esc(r.trackingNumber)}: ${esc(r.reason)}</p>`).join('')}` : ''}
       <div class="pas-actions">
       ${!created ? `<button class="button button-primary" id="pas-create-pl" ${operationBusy || (!prepared?.eligible.length && !state.creationRequestId) || ['blocked', 'persisting'].includes(pl?.phase) ? 'disabled' : ''}>${state.creationRequestId ? 'Retry / Resume Picking List' : 'GENERATE PICKING LIST'}</button><button class="button" id="pas-remove-excel" ${operationBusy || !state.file || hasProtectedOperation() ? 'disabled' : ''}>REMOVE EXCEL</button>` : ''}
@@ -367,7 +461,7 @@
   async function prepareInventory() {
     if (operationBusy || state.creationRequestId || !state.packages.length) return;
     operationBusy = true; state.workflowError = ""; renderSetup(); const run = lifecycle;
-    try { const result = await window.MkiteB044Picking.prepare({ rows: state.packages }); if (context && run === lifecycle) { state.prepared = result; save(); } }
+    try { await prepareCommands(); if (!context || run !== lifecycle) return; const result = await window.MkiteB044Picking.prepare({ rows: state.packages }); if (context && run === lifecycle) { state.prepared = result; save(); } }
     catch (error) { if (context && run === lifecycle) { state.prepared = null; state.workflowError = error.message; } }
     finally { if (context && run === lifecycle) { operationBusy = false; renderSetup(); } }
   }
@@ -395,7 +489,7 @@
     render,
     init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; restore(); renderSetup(); },
     cleanup() { lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.body.classList.remove("pas-printing"); document.getElementById("pas-print-host")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
-    _test: { parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
+    _test: { commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
   };
   window.MkiteClientToolModules["b044.put-away-scan"] = module;
 }(window, document));

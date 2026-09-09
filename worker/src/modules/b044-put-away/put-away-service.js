@@ -15,6 +15,9 @@ export function normalizeRows(rows) {
       row[key] = cleanText(key === 'trackingNumber' ? String(raw?.[key] ?? '') : raw?.[key]);
       if (!row[key] || row[key].length > 256 || /[\u0000-\u001f\u007f]/.test(row[key])) fail('INVALID_ROWS', `Invalid ${key} at row ${index + 1}.`);
     }
+    const commandRaw = typeof raw.commandRaw === 'string' && raw.commandRaw.trim() ? raw.commandRaw : '';
+    const simplified = raw.commandAiStatus === 'SIMPLIFIED' && typeof raw.commandDisplay === 'string' && raw.commandDisplay.trim();
+    if (commandRaw) Object.assign(row, { commanded:true, commandRaw, commandDisplay:simplified?raw.commandDisplay:commandRaw, commandAiStatus:simplified?'SIMPLIFIED':'FALLBACK', commandAiSource:simplified?'AI':'RAW_FALLBACK', commandReference:simplified&&typeof raw.commandReference==='string'?raw.commandReference:'' });
     const order = row.warehouseInboundOrder.match(/^(RMA|RV)([^-]+)-/i);
     if (!order || !order[2].trim()) fail('INVALID_ROWS', 'Unsupported warehouse order number.');
     row.clientId = order[2].trim().toUpperCase(); row.prefix = order[1].toUpperCase(); row.finalSku = `${row.clientId}-${row.inboundSku}`;

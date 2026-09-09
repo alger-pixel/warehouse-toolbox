@@ -38,10 +38,28 @@ test('directory filter panel Search applies inputs and Clear restores all active
   const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, { value: '', innerHTML: '', handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } }); return nodes.get(id); } };
   const mainContent = { innerHTML: '' };
   vm.runInNewContext(`${source}\nrenderClientTools();`, { window, document, mainContent, escapeHtml: value => String(value ?? ''), icons: { warehouse: '' } });
-  assert.match(mainContent.innerHTML, /CLIENT TOOL FILTERS/);
+  assert.match(mainContent.innerHTML, /Filter Tools/);
+  assert.doesNotMatch(mainContent.innerHTML, /<img[^>]+mkite-logo/);
+  assert.match(fs.readFileSync("css/client-tools/client-tools.css", "utf8"), /client-tools-hero-bg\.png/);
+  for (const [label, count] of [['Warehouses',1],['Clients',2],['Tools',3]]) assert.ok(mainContent.innerHTML.includes(`<dt>${label}</dt><dd>${count}</dd>`));
+  assert.match(mainContent.innerHTML, /directory-hero/);
+  assert.equal(document.getElementById('directory-count').textContent, '3 tools found');
   assert.match(mainContent.innerHTML, /SEARCH TOOLS/);
   const results = document.getElementById('directory-results');
   assert.match(results.innerHTML, /B044 - Put Away Scan/);
+  assert.match(results.innerHTML, /More tools coming soon/);
+  assert.equal((results.innerHTML.match(/directory-tool-card/g) || []).length, 3);
+  for (const tool of registry.filter()) {
+    assert.ok(results.innerHTML.includes(tool.description));
+    assert.ok(results.innerHTML.includes(`data-client-tool-id="${tool.route}"`));
+    assert.ok(results.innerHTML.includes(`data-client-card-theme="${tool.cardTheme}"`));
+  }
+  document.getElementById('directory-header-query').value = 'Batch Inventory';
+  document.getElementById('directory-header-query').oninput();
+  assert.equal(document.getElementById('directory-count').textContent, '1 tool found');
+  assert.match(results.innerHTML, /TINECO TOC Batch Inventory/);
+  document.getElementById('directory-clear').handlers.click();
+  assert.equal(document.getElementById('directory-header-query').value, '');
   const search = () => document.getElementById('directory-form').handlers.submit({ preventDefault() {} });
   for (const [id, mismatch, match] of [['directory-warehouse','MKS159','MKS66'], ['directory-client','C102','B044'], ['directory-query','Outbound','CT-MKS66-B044-0001']]) {
     document.getElementById(id).value = mismatch; search(); assert.match(results.innerHTML, /No tools found/);
@@ -63,4 +81,16 @@ test('registry-driven card palette separates B044 blue and Tineco teal without c
    for(const value of [`${clientId} - ${tool.name}`,tool.toolId,'Warehouse: MKS66',`Client ID: ${clientId}`,'OPEN TOOL'])assert.ok(html.includes(value));
    assert.ok(!html.includes(tool.description));assert.ok(html.includes(`data-client-tool-id="${slug}"`));
  }
+});
+test('directory styles isolate desktop grid, mobile layout and dark surfaces', () => {
+  const css = fs.readFileSync('css/client-tools/client-tools.css', 'utf8');
+  const html = fs.readFileSync('index.html', 'utf8');
+  assert.match(css, /\.client-tool-grid[^}]*repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css, /@media \(max-width:900px\)[^\n]*\.client-directory \.client-tool-grid \{ grid-template-columns:1fr/);
+  assert.match(css, /@media \(max-width:540px\)[^\n]*client-directory-filters \{ grid-template-columns:1fr/);
+  assert.match(css, /\[data-theme="dark"\] \.app-shell:has\(\.client-directory\)/);
+  assert.match(html, /directory-sidebar-logo[^>]*assets\/images\/mkite-logo.png/);
+  assert.match(html, /id="theme-toggle"/);
+  assert.match(html, /id="menu-button"/);
+  assert.match(html, /Search tools, clients, or keywords/);
 });

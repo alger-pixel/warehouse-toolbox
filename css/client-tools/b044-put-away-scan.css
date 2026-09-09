@@ -134,3 +134,34 @@
 }
 
 .pas-scan-mode.is-confirmation-error { background:#b3262d; }
+
+.pas-command-summary { font-size:13px; }
+.pas-label.pas-command-label { display:flex; flex-direction:column; width:4in; height:6in; min-height:0; padding:.19in; overflow:visible; background:#fff; color:#000; text-align:left; }
+.pas-command-label h2 { flex:none; font:bold 26pt/1.1 Arial,sans-serif; margin:0 0 8pt; }
+.pas-command-identity { flex:none; margin:0 0 8pt; padding:0 0 7pt; border-bottom:2px solid #000; }
+.pas-command-identity>div+div { margin-top:6pt; }
+.pas-command-identity dt { font:bold 10pt/1.15 Arial,sans-serif; margin:0 0 2pt; }
+.pas-command-identity dd { font:700 var(--command-identity-size,14pt)/1.15 Arial,sans-serif; margin:0; white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; }
+.pas-command-content { flex:none; font-family:Arial,sans-serif; font-weight:700; line-height:1.15; text-align:left; }
+.pas-command-content pre { font:inherit; white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; margin:0; }
+.pas-command-reference { margin:0; padding:0; }
+.pas-command-reference strong { display:block; font:inherit; }
+.pas-label.pas-command-label.is-preview { width:4in; height:6in; aspect-ratio:2/3; max-width:none; }
+@media print { body.pas-printing .pas-command-label { display:flex; width:4in; height:6in; break-inside:avoid; } }
+
+.pas-command-summary { padding:14px 16px; margin:12px 0; border:1px solid var(--border-color); border-left:4px solid #437ea9; border-radius:10px; background:var(--panel-secondary); }
+.pas-command-summary.is-complete { border-left-color:#27855a; }
+.pas-command-summary.is-retryable { border-left-color:#a9620a; }
+.pas-command-summary-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.pas-command-summary-heading>span { color:var(--text-secondary); }
+.pas-command-summary dl { display:flex; flex-wrap:wrap; gap:12px 24px; margin:12px 0; }
+.pas-command-summary dt { color:var(--text-secondary); font-size:11px; }
+.pas-command-summary dd { margin:3px 0 0; font-size:20px; font-weight:700; }
+.pas-command-summary p { margin:6px 0; color:var(--text-secondary); font-size:12px; }
+.pas-command-summary .button { margin-top:8px; }
+.pas-label-preview { width:4in; min-width:0; margin:0; justify-self:center; }
+.pas-label-preview figcaption { margin-bottom:10px; font-weight:700; }
+
+/* Both preview figures have the original package label's physical width. */
+.pas-preview-grid { grid-template-columns:repeat(2,minmax(4in,1fr)); overflow-x:auto; }
+@media(max-width:1000px) { .pas-preview-grid { grid-template-columns:minmax(4in,1fr); } }
