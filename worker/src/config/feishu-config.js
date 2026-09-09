@@ -9,6 +9,8 @@ export function getFeishuConfig(env) {
     appToken: env.FEISHU_BASE_APP_TOKEN.trim(),
     packageTableId: env.FEISHU_PACKAGE_TABLE_ID.trim(),
     clientTableId: env.FEISHU_CLIENT_TABLE_ID.trim(),
+    tinecoTocUnitTableId: typeof env.FEISHU_TINECO_TOC_UNIT_TABLE_ID === "string" ? env.FEISHU_TINECO_TOC_UNIT_TABLE_ID.trim() : "",
+    toolTableId: typeof env.FEISHU_TOOL_TABLE_ID === "string" ? env.FEISHU_TOOL_TABLE_ID.trim() : "",
     pickingListTableId: typeof env.FEISHU_PICKING_LIST_TABLE_ID === "string" ? env.FEISHU_PICKING_LIST_TABLE_ID.trim() : "",
     warehouseTimeZone: typeof env.WAREHOUSE_TIME_ZONE === "string" && env.WAREHOUSE_TIME_ZONE.trim() ? env.WAREHOUSE_TIME_ZONE.trim() : "America/Toronto"
   };

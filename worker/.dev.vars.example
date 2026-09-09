@@ -8,3 +8,8 @@ ALLOWED_ORIGINS=https://alger-pixel.github.io,http://127.0.0.1:5501,http://local
 
 # PICKING LIST CLASS table; required for Picking List creation.
 FEISHU_PICKING_LIST_TABLE_ID=tblRfLgo1jIQkzmi
+
+# TOOL CLASS: required only for manual metadata sync
+FEISHU_TOOL_TABLE_ID=tblNxCev7LS7uETW
+
+FEISHU_TINECO_TOC_UNIT_TABLE_ID=tblztQK3EhDAw2Wm

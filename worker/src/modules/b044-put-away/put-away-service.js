@@ -12,7 +12,7 @@ export function normalizeRows(rows) {
   return rows.map((raw, index) => {
     const row = {};
     for (const key of ['trackingNumber', 'arrivalDate', 'inboundSku', 'warehouseInboundOrder']) {
-      row[key] = cleanText(raw?.[key]);
+      row[key] = cleanText(key === 'trackingNumber' ? String(raw?.[key] ?? '') : raw?.[key]);
       if (!row[key] || row[key].length > 256 || /[\u0000-\u001f\u007f]/.test(row[key])) fail('INVALID_ROWS', `Invalid ${key} at row ${index + 1}.`);
     }
     const order = row.warehouseInboundOrder.match(/^(RMA|RV)([^-]+)-/i);
@@ -38,11 +38,33 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     const bySku = new Map();
     for (const record of inventory) { const key = normalizeSku(record.fields?.[F.sku]); if (!bySku.has(key)) bySku.set(key, []); bySku.get(key).push(record); }
     const classified = rows.map(row => {
-      const matches = bySku.get(row.normalizedTracking) || [], record = matches[0], fields = record?.fields || {};
-      const packageStatus = cleanText(fields[F.status]);
-      const eligibility = !matches.length ? 'NOT_FOUND' : matches.length !== 1 || fields[F.status] !== 'Active' ? 'BLOCKED_STATUS' : 'ELIGIBLE';
-      return { ...row, packageRecordId: matches.length === 1 ? record.record_id : '', currentLocation: cleanText(fields[F.location]), packageStatus: matches.length > 1 ? matches.map(r => cleanText(r.fields?.[F.status])).join(', ') : packageStatus, eligibility, reason: !matches.length ? 'NOT FOUND IN MKITE PACKAGE CLASS' : matches.length > 1 ? 'MULTIPLE PACKAGE RECORDS — MANUAL REVIEW REQUIRED' : eligibility === 'BLOCKED_STATUS' ? `STATUS ${packageStatus || 'EMPTY'}` : '' };
+      // Exact identities suppress partial fallback, including blocked exact identities.
+      const exact = bySku.get(row.normalizedTracking) || [];
+      const matches = exact.length ? exact : [...bySku.entries()]
+        .filter(([sku]) => sku && (sku.includes(row.normalizedTracking) || row.normalizedTracking.includes(sku)))
+        .flatMap(([, candidates]) => candidates);
+      const active = matches.filter(record => record.fields?.[F.status] === 'Active');
+      const matchType = exact.length ? 'EXACT' : matches.length ? 'PARTIAL' : 'NONE';
+      const eligibility = !matches.length ? 'NOT_FOUND' : !active.length ? 'BLOCKED_STATUS' : active.length > 1 ? 'AMBIGUOUS' : 'ELIGIBLE';
+      const record = eligibility === 'ELIGIBLE' ? active[0] : undefined;
+      const fields = record?.fields || {};
+      const packageStatus = record ? cleanText(fields[F.status]) : matches.map(r => cleanText(r.fields?.[F.status])).join(', ');
+      // Operational identity must be the stored SKU, never the shortened/wrapped Excel query.
+      // Keep the source value for auditing; downstream scan and lifecycle checks stay strict.
+      return { ...row, sourceTrackingNumber: row.trackingNumber,
+        ...(record ? { trackingNumber: cleanText(fields[F.sku]), normalizedTracking: normalizeSku(fields[F.sku]) } : {}),
+        packageRecordId: record?.record_id || '', currentLocation: cleanText(fields[F.location]), packageStatus, eligibility, matchType,
+        reason: eligibility === 'NOT_FOUND' ? 'NOT FOUND IN MKITE PACKAGE CLASS' : eligibility === 'AMBIGUOUS' ? `AMBIGUOUS ${matchType} MATCH — MULTIPLE ACTIVE PACKAGE RECORDS` : eligibility === 'BLOCKED_STATUS' ? `STATUS ${packageStatus || 'EMPTY'}` : '' };
     });
+    // Different Excel queries can resolve to the same package. Do not assign it twice.
+    const assignments = new Map();
+    for (const row of classified.filter(row => row.eligibility === 'ELIGIBLE')) {
+      if (!assignments.has(row.packageRecordId)) assignments.set(row.packageRecordId, []);
+      assignments.get(row.packageRecordId).push(row);
+    }
+    for (const duplicates of assignments.values()) if (duplicates.length > 1) {
+      for (const row of duplicates) Object.assign(row, { trackingNumber: row.sourceTrackingNumber, normalizedTracking: normalizeSku(row.sourceTrackingNumber), packageRecordId: '', eligibility: 'AMBIGUOUS', reason: 'MULTIPLE EXCEL ROWS MATCH THE SAME PACKAGE — MANUAL REVIEW REQUIRED' });
+    }
     return { packages: classified, eligible: classified.filter(r => r.eligibility === 'ELIGIBLE'), exceptions: classified.filter(r => r.eligibility !== 'ELIGIBLE') };
   }
   async function validateStatusWrite(targetStatus) {

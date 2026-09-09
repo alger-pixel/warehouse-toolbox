@@ -6,7 +6,7 @@ import { handleRequest } from '../src/index.js';
 function fixture(t, { missingProcessing = false } = {}) {
   const memory = new Map(), events = [], logs = [];
   const storage = { async get(key) { return structuredClone(memory.get(key)); }, async put(key, value) { memory.set(key, structuredClone(value)); } };
-  const packages = Array.from({ length: 6 }, (_, i) => ({ record_id: `rec-${i}`, fields: { SKU: `TRACK-${i}`, STATUS: 'Active', LOCATION: 'A1', NOTE: '' } }));
+  const packages = Array.from({ length: 6 }, (_, i) => ({ record_id: `rec-${i}`, fields: { SKU: `TRACK-${String(i).padStart(3, '0')}`, STATUS: 'Active', LOCATION: 'A1', NOTE: '' } }));
   const masters = [];
   const env = { FEISHU_APP_ID: crypto.randomUUID(), FEISHU_APP_SECRET: 'PRIVATE-SECRET', FEISHU_BASE_APP_TOKEN: 'base', FEISHU_PACKAGE_TABLE_ID: 'packages', FEISHU_CLIENT_TABLE_ID: 'clients', FEISHU_PICKING_LIST_TABLE_ID: 'lists', ALLOWED_ORIGINS: 'http://localhost:5501' };
   let schemaMissing = missingProcessing, failMaster = false, interruptUpdate = false, lookupFailure = null;
@@ -33,7 +33,7 @@ function fixture(t, { missingProcessing = false } = {}) {
   });
   const coordinator = new B044PutAwayCoordinator({ storage }, env);
   env.B044_PUT_AWAY = { idFromName: name => name, get: () => coordinator };
-  const rows = Array.from({ length: 20 }, (_, i) => ({ trackingNumber: `TRACK-${i}`, arrivalDate: '2026-09-07', inboundSku: 'LABEL', warehouseInboundOrder: 'RMAB044-1' }));
+  const rows = Array.from({ length: 20 }, (_, i) => ({ trackingNumber: `TRACK-${String(i).padStart(3, '0')}`, arrivalDate: '2026-09-07', inboundSku: 'LABEL', warehouseInboundOrder: 'RMAB044-1' }));
   const input = { requestId: 'operation-123456789', rows };
   const send = (body = input, endpoint = 'create-picking-list') => handleRequest(new Request(`https://api.example/api/b044/put-away/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5501' }, body: JSON.stringify(body) }), env);
   return { memory, storage, events, logs, packages, masters, input, send, setLookupFailure: value => { lookupFailure = value; }, fixSchema: () => { schemaMissing = false; }, failMaster: () => { failMaster = true; }, interruptUpdate: () => { interruptUpdate = true; } };

@@ -5,6 +5,8 @@
     const value = String(hash || "").replace(/^#/, "");
     const inHouseToolMatch = value.match(/^in-house-tool\/([^/]+)$/);
     if (inHouseToolMatch) return { view: "in-house-tool", toolId: inHouseToolMatch[1] };
+    const warehouseToolMatch = value.match(/^client\/([^/]+)\/([^/]+)\/tool\/([^/]+)$/);
+    if (warehouseToolMatch) return { view: "client-tool", warehouse: warehouseToolMatch[1], clientId: warehouseToolMatch[2], toolId: warehouseToolMatch[3] };
     const clientToolMatch = value.match(/^client\/([^/]+)\/tool\/([^/]+)$/);
     if (clientToolMatch) return { view: "client-tool", clientId: clientToolMatch[1], toolId: clientToolMatch[2] };
     const clientMatch = value.match(/^client\/([^/]+)$/);
@@ -16,7 +18,7 @@
   function navigate(route) {
     let hash;
     if (route.view === "in-house-tool") hash = `#in-house-tool/${route.toolId}`;
-    else if (route.view === "client-tool") hash = `#client/${route.clientId}/tool/${route.toolId}`;
+    else if (route.view === "client-tool") hash = route.warehouse ? `#client/${route.warehouse}/${route.clientId}/tool/${route.toolId}` : `#client/${route.clientId}/tool/${route.toolId}`;
     else if (route.view === "client") hash = `#client/${route.clientId}`;
     else hash = route.view === "tool" ? `#tool/${route.toolId}` : `#${route.view}`;
     if (window.location.hash === hash) onChange(current()); else window.location.hash = hash;

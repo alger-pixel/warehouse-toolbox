@@ -75,3 +75,13 @@ html,body,.app-shell,.workspace,.main-content { min-width:0; }
   .tool-card:hover,.client-card:hover,.client-tool-card:hover,.in-house-card:hover,.platform-card:hover,.button:hover { transform:none; }
 }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; } }
+
+.client-directory-panel { padding:22px; margin:24px 0; border:1px solid var(--border-color); border-radius:16px; background:var(--panel-bg); }
+.client-directory-panel h3 { margin:0 0 18px; }
+.client-directory-filters { display:flex; flex-wrap:wrap; align-items:end; gap:16px; }
+.client-directory-actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:16px; }
+.client-directory-actions .button { min-height:44px; }
+.client-directory-filters label { display:grid; flex:1; min-width:180px; gap:8px; font-size:12px; }
+.client-directory-filters input,.client-directory-filters select { min-height:44px; padding:10px; border:1px solid var(--border-color); border-radius:8px; background:var(--panel-bg); color:var(--text-primary); }
+
+@media (max-width:540px) { .client-directory-filters { flex-direction:column; align-items:stretch; } .client-directory-filters label { min-width:0; } .client-directory-actions .button { width:100%; } }

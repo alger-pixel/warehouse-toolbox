@@ -133,22 +133,21 @@
   }
 
   function renderClientTools() {
-    const clients = window.MkiteClientRegistry.all();
-    const lastClient = window.MkiteClientRegistry.get(window.MkiteStorage.get("client-tools.last-client", ""));
-    mainContent.innerHTML = `<div class="client-library"><div class="page-header"><div><span class="tool-kicker">Client workspaces</span><h2>Client Tools</h2><p>Select the client you are currently serving.</p></div></div>
-      ${lastClient ? `<section class="recent-client"><div class="section-header"><h3>Recently Used</h3></div>${clientCard(lastClient, true)}</section>` : ""}
-      <div class="client-search search-field">${icons.search}<label class="sr-only" for="client-search">Search clients</label><input id="client-search" type="search" placeholder="Search clients..." autocomplete="off"><button class="icon-button search-clear" id="client-search-clear" type="button" aria-label="Clear search">×</button></div>
-      <section><div class="section-header"><h3>All Clients</h3><span id="client-count"></span></div><div class="client-grid" id="client-grid"></div></section></div>`;
-    const input = document.getElementById("client-search"); const clear = document.getElementById("client-search-clear"); const grid = document.getElementById("client-grid"); const count = document.getElementById("client-count");
-    function update() { const matches = window.MkiteClientRegistry.search(input.value); clear.classList.toggle("is-visible", Boolean(input.value.trim())); count.textContent = `${matches.length} ${matches.length === 1 ? "client" : "clients"}`; grid.innerHTML = matches.length ? matches.map((client) => clientCard(client, false)).join("") : `<div class="empty-state">${icons.search}<h3>No clients found</h3><p>Try another client name.</p></div>`; }
-    input.addEventListener("input", update); clear.addEventListener("click", () => { input.value = ""; update(); input.focus(); }); update();
+    const registry = window.MkiteClientToolRegistry, tools = registry.filter();
+    const options = key => [...new Set(tools.map(t => t[key]))].sort().map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
+    mainContent.innerHTML = `<div class="client-library"><div class="page-header"><div><h2>Client Tools</h2><p>Find tools by warehouse and client.</p></div></div><form id="directory-form" class="client-directory-panel"><h3>CLIENT TOOL FILTERS</h3><div class="client-directory-filters"><label>WAREHOUSE<select id="directory-warehouse"><option value="">All Warehouses</option>${options('warehouse')}</select></label><label>CLIENT ID<select id="directory-client"><option value="">All Clients</option>${options('clientId')}</select></label><label>TOOL SEARCH<input id="directory-query" placeholder="Search name or Tool ID"></label></div><div class="client-directory-actions"><button class="button" type="submit">SEARCH TOOLS</button><button class="button button-neutral" type="button" id="directory-clear">CLEAR FILTERS</button></div></form><h3>AVAILABLE TOOLS</h3><div class="client-tool-grid" id="directory-results"></div></div>`;
+    const warehouse = document.getElementById('directory-warehouse'), client = document.getElementById('directory-client'), query = document.getElementById('directory-query');
+    const update = () => { const matches = registry.filter({ warehouse: warehouse.value, clientId: client.value, query: query.value }); document.getElementById('directory-results').innerHTML = matches.length ? matches.map(clientToolCard).join('') : '<p>No tools found.</p>'; };
+    document.getElementById('directory-form').addEventListener('submit', event => { event.preventDefault(); update(); });
+    [warehouse, client, query].forEach(input => input.addEventListener('input', update));
+    document.getElementById('directory-clear').addEventListener('click', () => { warehouse.value = client.value = query.value = ''; update(); }); update();
   }
 
   function clientToolCard(tool) {
     const active = tool.status === "active";
     const statusLabel = tool.status === "coming-soon" ? "Coming Soon" : tool.status === "disabled" ? "Disabled" : tool.version;
-    return `<button class="client-tool-card" type="button" data-client-id="${escapeHtml(tool.clientId)}" data-client-tool-id="${escapeHtml(tool.id)}" data-client-theme="${escapeHtml(tool.theme || tool.clientId)}"${active ? "" : " disabled"}>
-      <span class="client-tool-icon">${icons[tool.icon] || icons.warehouse}</span><span class="client-tool-copy"><span class="client-tool-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.name)}</strong><span>${escapeHtml(tool.description)}</span></span><span class="client-tool-version">${escapeHtml(statusLabel)}</span>${active ? `<span class="client-card-arrow">${icons.arrow}</span>` : ""}
+    return `<button class="client-tool-card" type="button" data-client-id="${escapeHtml(tool.clientId)}" data-client-tool-id="${escapeHtml(tool.route)}" data-warehouse="${escapeHtml(tool.warehouse)}" data-client-theme="${escapeHtml(tool.theme || tool.clientId)}" data-client-card-theme="${escapeHtml(tool.cardTheme || tool.theme || 'blue')}"${active ? "" : " disabled"}>
+      <span class="client-tool-icon">${icons[tool.icon] || icons.warehouse}</span><span class="client-tool-copy"><span class="client-tool-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.clientId)} - ${escapeHtml(tool.name)}</strong><span>Tool ID: ${escapeHtml(tool.toolId)}</span><span>Warehouse: ${escapeHtml(tool.warehouse)} · Client ID: ${escapeHtml(tool.clientId)}</span><span>OPEN TOOL</span></span><span class="client-tool-version">${escapeHtml(statusLabel)}</span>${active ? `<span class="client-card-arrow">${icons.arrow}</span>` : ""}
     </button>`;
   }
 
@@ -172,14 +171,14 @@
     input.addEventListener("input", update); clear.addEventListener("click", () => { input.value = ""; update(); input.focus(); }); update();
   }
 
-  function renderClientToolWorkspace(clientId, toolId) {
-    const client = window.MkiteClientRegistry.get(clientId); const tool = window.MkiteClientToolRegistry.get(clientId, toolId);
+  function renderClientToolWorkspace(clientId, toolId, warehouse) {
+    const tool = window.MkiteClientToolRegistry.get(clientId, toolId, warehouse); const client = tool ? { id: tool.clientId, name: tool.clientId, theme: tool.theme, warehouse: tool.warehouse } : null;
     if (!client) { renderInvalidClient("Client not found", "This client is not available in the current deployment."); return; }
     if (!tool || tool.status !== "active") { renderInvalidClient("Tool unavailable", `This ${client.name} tool is not available.`); return; }
     window.MkiteStorage.set("client-tools.last-client", client.id);
     const module = tool.module && window.MkiteClientToolModules ? window.MkiteClientToolModules[tool.module] : null;
-    mainContent.innerHTML = `<div class="client-tool-workspace tool-page" data-client-theme="${escapeHtml(client.theme || client.id)}"><button class="back-link" type="button" data-client-id="${escapeHtml(client.id)}">← Back to ${escapeHtml(client.name)} Tools</button><div class="client-tool-hero"><div><span class="tool-kicker">${escapeHtml(client.name)} · ${escapeHtml(tool.category)}</span><h2>${escapeHtml(tool.name)}</h2><p>${escapeHtml(tool.description)}</p></div><span class="badge">${escapeHtml(tool.version)}</span></div><div class="client-tool-facts"><span><small>Client</small>${escapeHtml(client.name)}</span><span><small>Category</small>${escapeHtml(tool.category)}</span><span><small>Version</small>${escapeHtml(tool.version)}</span></div><section class="panel client-tool-module" id="client-tool-module">${module ? module.render() : '<div class="client-tool-placeholder"><h3>Workspace coming soon</h3></div>'}</section></div>`;
-    if (module) { activeToolModule = module; module.init({ root: document.getElementById("client-tool-module"), storage: window.MkiteStorage, toast: window.MkiteToast, audio: window.MkiteAudio, client, tool }); }
+    mainContent.innerHTML = `<div class="client-tool-workspace tool-page" data-client-theme="${escapeHtml(client.theme || client.id)}"><button class="back-link" type="button" data-route="client-tools">← Back to Client Tools</button><div class="client-tool-hero"><div><span class="tool-kicker">${escapeHtml(client.name)} · ${escapeHtml(tool.category)}</span><h2>${escapeHtml(tool.name)}</h2><p>${escapeHtml(tool.description)}</p></div><span class="badge">${escapeHtml(tool.version)}</span></div><div class="client-tool-facts"><span><small>Client</small>${escapeHtml(client.name)}</span><span><small>Warehouse</small>${escapeHtml(tool.warehouse)}</span><span><small>Tool ID</small>${escapeHtml(tool.toolId)}</span></div><section class="panel client-tool-module" id="client-tool-module">${module ? module.render() : '<div class="client-tool-placeholder"><h3>Workspace coming soon</h3></div>'}</section></div>`;
+    if (module) { activeToolModule = module; module.init({ root: document.getElementById("client-tool-module"), storage: window.MkiteStorage, toast: window.MkiteToast, audio: window.MkiteAudio, client, tool, ...window.MkiteClientToolRegistry.context(tool), clientToolContext: window.MkiteClientToolRegistry.context(tool) }); }
   }
 
   function renderSettings() {
@@ -214,7 +213,7 @@
     let title;
     if (route.view === "tool") title = window.MkiteToolRegistry.get(route.toolId)?.name || "Assisting Tools";
     else if (route.view === "in-house-tool") title = window.MkiteInHouseToolRegistry.get(route.toolId)?.name || "In House Tools";
-    else if (route.view === "client-tool") title = window.MkiteClientToolRegistry.get(route.clientId, route.toolId)?.name || "Client Tool";
+    else if (route.view === "client-tool") title = window.MkiteClientToolRegistry.get(route.clientId, route.toolId, route.warehouse)?.name || "Client Tool";
     else if (route.view === "client") title = window.MkiteClientRegistry.get(route.clientId)?.name || "Client Tools";
     else title = route.view === "tools" ? "Assisting Tools" : route.view === "client-tools" ? "Client Tools" : route.view === "in-house-tools" ? "In House Tools" : route.view.charAt(0).toUpperCase() + route.view.slice(1);
     sectionTitle.textContent = title; document.title = `${title} | MKITE Warehouse Tools`;
@@ -224,7 +223,7 @@
     else if (route.view === "tools") renderTools();
     else if (route.view === "client-tools") renderClientTools();
     else if (route.view === "client") renderClientPool(route.clientId);
-    else if (route.view === "client-tool") renderClientToolWorkspace(route.clientId, route.toolId);
+    else if (route.view === "client-tool") renderClientToolWorkspace(route.clientId, route.toolId, route.warehouse);
     else if (route.view === "in-house-tools") renderInHouseTools();
     else if (route.view === "in-house-tool") renderInHouseTool(route.toolId);
     else if (route.view === "settings") renderSettings();
@@ -235,7 +234,7 @@
   document.addEventListener("click", (event) => {
     const routeButton = event.target.closest("[data-route]"); if (routeButton) window.MkiteRouter.navigate({ view: routeButton.dataset.route });
     const toolButton = event.target.closest("[data-tool-id]"); if (toolButton) { const tool = window.MkiteToolRegistry.get(toolButton.dataset.toolId); if (tool.status === "active") window.MkiteRouter.navigate({ view: "tool", toolId: tool.id }); else window.MkiteToast.show(`${tool.name} is coming soon`); }
-    const clientToolButton = event.target.closest("[data-client-tool-id]"); if (clientToolButton && !clientToolButton.disabled) window.MkiteRouter.navigate({ view: "client-tool", clientId: clientToolButton.dataset.clientId, toolId: clientToolButton.dataset.clientToolId });
+    const clientToolButton = event.target.closest("[data-client-tool-id]"); if (clientToolButton && !clientToolButton.disabled) window.MkiteRouter.navigate({ view: "client-tool", warehouse: clientToolButton.dataset.warehouse, clientId: clientToolButton.dataset.clientId, toolId: clientToolButton.dataset.clientToolId });
     const clientButton = event.target.closest("[data-client-id]:not([data-client-tool-id])"); if (clientButton) window.MkiteRouter.navigate({ view: "client", clientId: clientButton.dataset.clientId });
     const inHouseButton = event.target.closest("[data-in-house-tool-id]"); if (inHouseButton && !inHouseButton.disabled) window.MkiteRouter.navigate({ view: "in-house-tool", toolId: inHouseButton.dataset.inHouseToolId });
   });

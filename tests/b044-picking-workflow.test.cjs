@@ -64,8 +64,9 @@ test('frontend routes all PL requests through secure API and exports exception r
   vm.runInNewContext(fs.readFileSync('js/client-tools/b044/picking-workflow.js', 'utf8'), { window, document: {} });
   for (const action of ['prepare', 'create', 'complete', 'cancel']) await window.MkiteB044Picking[action]({ test: true });
   assert.deepEqual(calls.map(c => c.path), ['/api/b044/put-away/prepare', '/api/b044/put-away/create-picking-list', '/api/b044/put-away/complete-package', '/api/b044/put-away/cancel-picking-list']);
-  window.MkiteB044Picking.exportExceptions([{ trackingNumber: '001', reason: 'NOT FOUND IN MKITE PACKAGE CLASS' }, { trackingNumber: '002', reason: 'STATUS Processing' }]);
+  window.MkiteB044Picking.exportExceptions([{ trackingNumber: '001', reason: 'NOT FOUND IN MKITE PACKAGE CLASS' }, { trackingNumber: '002', reason: 'STATUS Processing' }, { trackingNumber: '003', reason: 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS' }]);
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets.Exceptions);
+  assert.equal(rows[2].REASON, 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS');
   assert.equal(rows[0].REASON, 'NOT FOUND IN MKITE PACKAGE CLASS'); assert.equal(rows[1].REASON, 'STATUS Processing');
   const markup = window.MkiteB044Picking.a4Markup({ pickingListNumber: '<unsafe>', operational: true, packages: [], exceptions: [] });
   assert.match(markup, /size:A4/); assert.match(markup, /&lt;unsafe&gt;/); assert.match(markup, /PICKED BY/);
@@ -271,4 +272,20 @@ test('partial cancellation clears pending print confirmation and displays author
   assert.equal(h.tool.currentQueue().length, 0);
   h.tool.openScanMode(); await h.tool.processScan('TRACK0'); h.tool.printBatchWithDialog();
   assert.equal(prints, 1); assert.equal(h.calls.length, 0);
+});
+
+ test('partial PL identities alone reach preview and print while ambiguous and missing source rows stay excluded', () => {
+  const h = foundPackagesFixture(), state = h.tool.getState();
+  state.pl.packages[0].trackingNumber = '875539379028';
+  state.pl.packages[0].normalizedTracking = '875539379028';
+  state.pl.packages[0].sourceTrackingNumber = 'ABC875539379028XYZ';
+  state.pl.packages[0].matchType = 'PARTIAL';
+  state.prepared.exceptions[0].eligibility = 'AMBIGUOUS';
+  state.prepared.exceptions[1].eligibility = 'NOT_FOUND';
+  h.tool.renderPreview(); assert.match(h.root.innerHTML, /875539379028/);
+  assert.doesNotMatch(h.root.innerHTML, /ABC875539379028XYZ|TRACK6|TRACK7/);
+  let printed; h.tool.printService.requestPrint = items => { printed = items; };
+  h.tool.printBatchWithDialog();
+  assert.equal(printed.length, 6); assert.equal(printed[0].trackingNumber, '875539379028');
+  assert.ok(printed.every(row => row.eligibility === 'ELIGIBLE'));
 });

@@ -30,7 +30,7 @@
 .client-pool-count small { margin-top: 8px; font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
 .client-tool-group { margin-top: 40px; }
 .client-tool-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; }
-.client-tool-card { position: relative; display: grid; min-height: 190px; grid-template-columns: auto minmax(0,1fr) auto; gap: 20px; align-items: start; padding: 26px; border: 0; border-radius: 22px; background: var(--current-client-color); color: var(--current-client-text); box-shadow: var(--shadow-sm); cursor: pointer; text-align: left; transition: box-shadow var(--transition),transform var(--transition); }
+.client-tool-card { position: relative; display: grid; min-height: 170px; grid-template-columns: auto minmax(0,1fr) auto; gap: 20px; align-items: start; padding: 26px; border: 0; border-radius: 22px; background: var(--current-client-color); color: var(--current-client-text); box-shadow: var(--shadow-sm); cursor: pointer; text-align: left; transition: box-shadow var(--transition),transform var(--transition); }
 .client-tool-card:hover { box-shadow: var(--shadow); transform: translateY(-4px); }
 .client-tool-card:disabled { background: var(--current-client-soft); color: var(--current-client-soft-text); box-shadow: none; cursor: default; opacity: .78; }
 .client-tool-card:disabled:hover { transform: none; }
@@ -57,3 +57,13 @@
 .client-not-found p { margin: 0 0 24px; color: var(--text-secondary); }
 @media (max-width:800px) { .client-grid,.client-tool-grid { grid-template-columns: 1fr; } .client-pool-hero { align-items: flex-start; flex-wrap: wrap; } .client-pool-count { width: 100%; margin: 8px 0 0; align-items: flex-start; } }
 @media (max-width:560px) { .client-card { grid-template-columns: auto minmax(0,1fr); padding: 22px; } .client-card-arrow { display: none; } .client-card-meta { grid-column: 2; } .client-pool-hero,.client-tool-hero { align-items: flex-start; padding: 26px; flex-direction: column; } .client-pool-hero .client-mark { width: 58px; height: 58px; flex-basis: 58px; } .client-tool-facts { grid-template-columns: 1fr; } .client-tool-card { grid-template-columns: auto minmax(0,1fr); padding: 22px; } }
+
+/* Directory-only palette: independent of each tool workspace's theme. */
+.client-tool-card[data-client-card-theme] { --current-client-text:#fff; --current-client-soft:#e8eef3; --current-client-soft-text:#243747; }
+.client-tool-card[data-client-card-theme="blue"] { --current-client-color:#275e9b; }
+.client-tool-card[data-client-card-theme="teal"] { --current-client-color:#216b67; }
+.client-tool-card[data-client-card-theme="purple"] { --current-client-color:#704b8a; }
+.client-tool-card[data-client-card-theme="amber"] { --current-client-color:#89550f; }
+.client-tool-card[data-client-card-theme="indigo"] { --current-client-color:#4c548e; }
+.client-tool-card[data-client-card-theme="slate"] { --current-client-color:#46576a; }
+.client-tool-card[data-client-card-theme] .client-tool-copy>span:last-child { color:inherit; }

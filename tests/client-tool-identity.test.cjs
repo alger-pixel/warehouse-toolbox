@@ -1,0 +1,66 @@
+const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
+const window = { location: { hash: '' }, addEventListener() {} };
+for (const file of ['js/client-tools-registry.js','js/router.js']) vm.runInNewContext(fs.readFileSync(file,'utf8'), { window });
+const registry = window.MkiteClientToolRegistry;
+test('B044 immutable identity and both routes resolve to same runtime context', () => {
+  for (const hash of ['#client/B044/tool/put-away-scan','#client/MKS66/B044/tool/put-away-scan']) {
+    window.location.hash = hash; const route = window.MkiteRouter.current(); const tool = registry.get(route.clientId, route.toolId, route.warehouse);
+    assert.equal(tool.toolId, 'CT-MKS66-B044-0001'); assert.equal(registry.context(tool).warehouse, 'MKS66'); assert.equal(registry.context(tool).clientId, 'B044');
+  }
+  window.MkiteRouter.navigate({ view:'client-tool', warehouse:'MKS66', clientId:'B044', toolId:'put-away-scan' }); assert.equal(window.location.hash,'#client/MKS66/B044/tool/put-away-scan');
+  assert.equal(registry.get('B044','put-away-scan','MKS159'),null);
+});
+test('directory derives all active assignments and AND filters across warehouses', () => {
+  const original = registry.all()[0]; const r = window.MkiteCreateClientToolRegistry([original, {...original, warehouse:'MKS159',toolId:'CT-MKS159-B044-0001',name:'Other Tool'}, {...original,clientId:'C001',toolId:'CT-MKS66-C001-0001'}, {...original,toolId:'inactive',status:'inactive'}]);
+  assert.equal(r.filter().length,3); assert.equal(r.filter({warehouse:'MKS66'}).length,2); assert.equal(r.filter({clientId:'B044'}).length,2);
+  assert.equal(r.filter({warehouse:'MKS159',clientId:'B044',query:'other'}).length,1); assert.equal(r.filter({query:'CT-MKS66-B044'}).length,1); assert.equal(r.filter({warehouse:'MKS66',query:'other'}).length,0);
+  assert.throws(()=>window.MkiteCreateClientToolRegistry([original,original]), /CONFIGURATION_ERROR/);
+});
+test('cards and runtime expose identity without directory sync writes', () => {
+  const app=fs.readFileSync('js/app.js','utf8'); assert.match(app,/Tool ID: \$\{escapeHtml\(tool.toolId\)/); assert.match(app,/Warehouse: \$\{escapeHtml\(tool.warehouse\)/); assert.match(app,/Client ID: \$\{escapeHtml\(tool.clientId\)/); assert.match(app,/clientToolContext: window.MkiteClientToolRegistry.context\(tool\)/); assert.doesNotMatch(app,/sync-registry/);
+});
+test('directory card renders tool identity and action without registry description', () => {
+  const app = fs.readFileSync('js/app.js', 'utf8');
+  const source = app.slice(app.indexOf('  function clientToolCard('), app.indexOf('  function renderInvalidClient('));
+  const render = vm.runInNewContext(`${source}\nclientToolCard`, { escapeHtml: value => String(value ?? ''), icons: { warehouse: '' } });
+  const tool = registry.all()[0], html = render(tool);
+  for (const value of ['B044 - Put Away Scan', 'Tool ID: CT-MKS66-B044-0001', 'Warehouse: MKS66', 'Client ID: B044', 'OPEN TOOL']) assert.ok(html.includes(value), value);
+  assert.equal(tool.name, 'Put Away Scan');
+  assert.ok(tool.description.length > 0);
+  assert.ok(!html.includes(tool.description));
+  assert.match(html, /data-warehouse="MKS66"/);
+  assert.match(html, /data-client-tool-id="put-away-scan"/);
+});
+test('directory filter panel Search applies inputs and Clear restores all active tools', () => {
+  const app = fs.readFileSync('js/app.js', 'utf8');
+  const source = app.slice(app.indexOf('  function renderClientTools()'), app.indexOf('  function renderInvalidClient('));
+  const nodes = new Map();
+  const document = { getElementById(id) { if (!nodes.has(id)) nodes.set(id, { value: '', innerHTML: '', handlers: {}, addEventListener(type, handler) { this.handlers[type] = handler; } }); return nodes.get(id); } };
+  const mainContent = { innerHTML: '' };
+  vm.runInNewContext(`${source}\nrenderClientTools();`, { window, document, mainContent, escapeHtml: value => String(value ?? ''), icons: { warehouse: '' } });
+  assert.match(mainContent.innerHTML, /CLIENT TOOL FILTERS/);
+  assert.match(mainContent.innerHTML, /SEARCH TOOLS/);
+  const results = document.getElementById('directory-results');
+  assert.match(results.innerHTML, /B044 - Put Away Scan/);
+  const search = () => document.getElementById('directory-form').handlers.submit({ preventDefault() {} });
+  for (const [id, mismatch, match] of [['directory-warehouse','MKS159','MKS66'], ['directory-client','C102','B044'], ['directory-query','Outbound','CT-MKS66-B044-0001']]) {
+    document.getElementById(id).value = mismatch; search(); assert.match(results.innerHTML, /No tools found/);
+    document.getElementById(id).value = match; search(); assert.match(results.innerHTML, /B044 - Put Away Scan/);
+  }
+  document.getElementById('directory-query').value = 'missing'; search();
+  document.getElementById('directory-clear').handlers.click();
+  for (const id of ['directory-warehouse','directory-client','directory-query']) assert.equal(document.getElementById(id).value, '');
+  assert.match(results.innerHTML, /B044 - Put Away Scan/);
+});
+test('registry-driven card palette separates B044 blue and Tineco teal without changing workspace theme',()=>{
+ const app=fs.readFileSync('js/app.js','utf8');
+ const source=app.slice(app.indexOf('  function clientToolCard('),app.indexOf('  function renderInvalidClient('));
+ const render=vm.runInNewContext(`${source}\nclientToolCard`,{escapeHtml:v=>String(v??''),icons:{warehouse:''}});
+ for(const [clientId,slug,theme] of [['B044','put-away-scan','blue'],['TINECO-TOC','tineco-toc','teal']]){
+   const tool=registry.get(clientId,slug,'MKS66'),html=render(tool);
+   assert.equal(tool.cardTheme,theme);assert.equal(tool.theme,'blue');
+   assert.ok(html.includes(`data-client-card-theme="${theme}"`));
+   for(const value of [`${clientId} - ${tool.name}`,tool.toolId,'Warehouse: MKS66',`Client ID: ${clientId}`,'OPEN TOOL'])assert.ok(html.includes(value));
+   assert.ok(!html.includes(tool.description));assert.ok(html.includes(`data-client-tool-id="${slug}"`));
+ }
+});

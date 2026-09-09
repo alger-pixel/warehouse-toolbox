@@ -27,8 +27,8 @@ function fixture(packages = [packageRecord('A')]) {
 }
 test('prepare exact normalized matching classifies Active, blocked, missing and ambiguous without writes', async () => {
   const f = fixture([packageRecord('A'), packageRecord('B', 'Processing'), packageRecord('D'), { ...packageRecord('D'), record_id: 'rec-duplicate' }]);
-  const result = await f.service().prepare({ rows: [' a ', 'B', 'C', 'D', 'AA'].map(source) });
-  assert.deepEqual(result.packages.map(r => r.eligibility), ['ELIGIBLE', 'BLOCKED_STATUS', 'NOT_FOUND', 'BLOCKED_STATUS', 'NOT_FOUND']);
+  const result = await f.service().prepare({ rows: [' a ', 'B', 'C', 'D', 'ZZ'].map(source) });
+  assert.deepEqual(result.packages.map(r => r.eligibility), ['ELIGIBLE', 'BLOCKED_STATUS', 'NOT_FOUND', 'AMBIGUOUS', 'NOT_FOUND']);
   assert.equal(result.exceptions[0].reason, 'STATUS Processing'); assert.equal(result.exceptions[1].reason, 'NOT FOUND IN MKITE PACKAGE CLASS'); assert.match(result.exceptions[2].reason, /MULTIPLE/);
   assert.deepEqual(f.events, ['list-packages']); assert.equal(f.memory.size, 0);
 });
@@ -337,4 +337,62 @@ test('all-completed cancellation retains every package and only updates master l
   assert.equal(result.processingReturnedToActive, 0); assert.equal(result.skipped, 0);
   assert.deepEqual(f.data.get('rec-A'), before);
   assert.equal(f.events.filter(e => e.fields && e.recordId.startsWith('rec-')).length, 0);
+});
+
+for (const [stored, query, matchType] of [
+  ['ABC123', ' abc123 ', 'EXACT'],
+  ['1ZR09J502020269428', '2020269428', 'PARTIAL'],
+  ['875539379028', 'ABC875539379028XYZ', 'PARTIAL'],
+  ...['ABC/123', 'A@B044', 'SKU-01_ABC', '123/456@XYZ', 'ABC/123@B044', 'A\\B.# +C'].flatMap(sku => [[sku, sku, 'EXACT'], [sku, `XX${sku}YY`, 'PARTIAL']]),
+  ['ABC/123@B044', '123@B044', 'PARTIAL'],
+  ['123456', 123456, 'EXACT']
+]) test(`Excel matching preserves identifier ${JSON.stringify(query)} (${matchType})`, async () => {
+  const f = fixture([packageRecord(stored)]);
+  const result = await f.service().prepare({ rows: [source(query)] });
+  assert.equal(result.eligible.length, 1); assert.equal(result.exceptions.length, 0);
+  assert.equal(result.eligible[0].matchType, matchType);
+  assert.equal(result.eligible[0].trackingNumber, stored);
+  assert.equal(result.eligible[0].sourceTrackingNumber, String(query).trim());
+});
+
+test('exact priority and Active filtering never select an ambiguous or blocked identity', async () => {
+  for (const [packages, expected, type] of [
+    [[packageRecord('ABC123'), packageRecord('XXABC123YY')], 'ELIGIBLE', 'EXACT'],
+    [[packageRecord('ABC123'), { ...packageRecord('abc123', 'Processed'), record_id: 'rec-old' }], 'ELIGIBLE', 'EXACT'],
+    [[packageRecord('ABC123'), packageRecord('abc123')], 'AMBIGUOUS', 'EXACT'],
+    [[packageRecord('XXABC123'), packageRecord('ABC123YY')], 'AMBIGUOUS', 'PARTIAL'],
+    [[packageRecord('XXABC123'), packageRecord('ABC123YY', 'Processed')], 'ELIGIBLE', 'PARTIAL'],
+    [[packageRecord('ABC123', 'Processed'), packageRecord('XXABC123')], 'BLOCKED_STATUS', 'EXACT'],
+    ...['Processing', 'Processed', 'Disposal', 'Future', 'active', ' Active '].map(status => [[packageRecord('XXABC123', status)], 'BLOCKED_STATUS', 'PARTIAL']),
+    [[packageRecord('UNRELATED'), packageRecord('')], 'NOT_FOUND', 'NONE']
+  ]) {
+    const f = fixture(packages), result = await f.service().prepare({ rows: [source('ABC123')] });
+    assert.equal(result.packages[0].eligibility, expected); assert.equal(result.packages[0].matchType, type);
+    assert.equal(result.eligible.length, expected === 'ELIGIBLE' ? 1 : 0);
+    if (expected !== 'ELIGIBLE') assert.equal(result.exceptions[0].packageRecordId, '');
+  }
+});
+
+test('partial package enters operational PL with stored identity; exceptions stay out and confirmation stays exact', async () => {
+  const f = fixture([packageRecord('875539379028'), packageRecord('XXAMB'), packageRecord('AMBYY'), packageRecord('XXBLOCK', 'Processing')]);
+  const input = { ...f.input, rows: ['ABC875539379028XYZ', 'AMB', 'MISSING', 'BLOCK'].map(source) };
+  const pl = await f.service().create(input);
+  assert.equal(pl.operational, true); assert.equal(pl.packages.length, 1);
+  assert.equal(pl.packages[0].trackingNumber, '875539379028');
+  assert.deepEqual(pl.exceptions.map(row => row.eligibility), ['AMBIGUOUS', 'NOT_FOUND', 'BLOCKED_STATUS']);
+  assert.match(pl.exceptions[0].reason, /AMBIGUOUS PARTIAL MATCH/);
+  assert.equal(f.data.get('rec-XXAMB').fields.STATUS, 'Active');
+  assert.equal(f.data.get('rec-AMBYY').fields.STATUS, 'Active');
+  const complete = { pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, packageRecordId: pl.packages[0].packageRecordId, trackingNumber: '875539379028' };
+  await assert.rejects(f.service().complete({ ...complete, confirmationTracking: 'ABC875539379028XYZ' }), error => error.code === 'WRONG_PACKAGE_CONFIRMATION');
+  assert.equal((await f.service().complete({ ...complete, confirmationTracking: '875539379028' })).pickingListComplete, true);
+});
+
+test('different Excel identifiers resolving to one package are exceptions before PL assignment', async () => {
+  const f = fixture([packageRecord('ABC123')]);
+  const input = { ...f.input, rows: ['ABC123', 'XXABC123YY'].map(source) };
+  const prepared = await f.service().prepare(input);
+  assert.equal(prepared.eligible.length, 0); assert.equal(prepared.exceptions.length, 2);
+  await assert.rejects(f.service().create(input), error => error.code === 'NO_ELIGIBLE_PACKAGES');
+  assert.equal(f.data.get('rec-ABC123').fields.STATUS, 'Active');
 });

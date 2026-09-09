@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createTinecoInventoryService,COLUMNS,EXPORT_LIMIT} from '../src/modules/tineco-inventory/inventory-service.js';
+import {handleRequest} from '../src/index.js';
+const row=(i,fields={})=>({record_id:`rec-${String(i).padStart(4,'0')}`,fields:{'UNIT ID':`UNIT-${i}`,SN:`SN-${i}`,'TRACKING NUMBER':`TRACK-${i}`,'CLIENT STATUS':['Pending','Completed','Disposal'][i%3],'REPAIR LEVEL':'Level 2','REPAIR RESULT':'Scrap','LABOR MINUTES':10,'REPAIR DATE':Date.parse('2026-09-09T02:00:00Z'),...fields}});
+function setup(rows=Array.from({length:123},(_,i)=>row(i))){const calls=[];const records={listRecords:async args=>{calls.push(args);return rows;},listFields:async()=>[{field_name:'REPAIR LEVEL',property:{options:[{name:'Future Level'}]}}]};return {calls,service:createTinecoInventoryService({appToken:'base',tinecoTocUnitTableId:'tblztQK3EhDAw2Wm',warehouseTimeZone:'America/Toronto'},records)};}
+test('default browsing, pagination, full summary and all-filtered export use only reads',async()=>{const f=setup(),r=await f.service.search();assert.equal(r.results.length,50);assert.equal(r.pagination.totalPages,3);assert.equal(r.pagination.totalMatched,123);assert.deepEqual(r.summary,{found:123,pending:41,completed:41,disposal:41,totalLaborMinutes:1230});assert.equal((await f.service.search({page:3})).results.length,23);const exported=await f.service.search({export:true});assert.equal(exported.results.length,123);assert.deepEqual(exported.columns,COLUMNS);assert.ok(r.options['REPAIR LEVEL'].includes('Future Level'));assert.ok(f.calls.every(c=>c.tableId==='tblztQK3EhDAw2Wm'));});
+for(const [key,field] of [['sn','SN'],['trackingNumber','TRACKING NUMBER']])test(`${key} literal exact-first and both partial directions preserve special characters`,async()=>{
+ const f=setup([row(1,{[field]:'ABC/123@_- .#'}),row(2,{[field]:'XXABC/123@_- .#YY'})]);
+ assert.equal((await f.service.search({[key]:' abc/123@_- .# '})).results.length,1);
+ assert.equal((await f.service.search({[key]:'123@_- .#'})).results.length,2);
+ assert.equal((await f.service.search({[key]:'ZZABC/123@_- .#ZZ'})).results.length,1);
+ assert.equal((await f.service.search({[key]:'unknown'})).results.length,0);
+});
+for(const [query,count] of [[{repairFrom:'2026-09-08'},123],[{repairFrom:'2026-09-09'},0],[{repairTo:'2026-09-08'},123],[{repairTo:'2026-09-07'},0],[{repairFrom:'2026-09-08',repairTo:'2026-09-08'},123],[{repairLevel:'Level 2'},123],[{repairLevel:'Level 1'},0],[{repairResult:'Scrap'},123],...['Pending','Completed','Disposal'].map(clientStatus=>[{clientStatus},41]),[{clientStatus:'Pending',repairLevel:'Level 2',repairResult:'Scrap',sn:'SN-0',repairTo:'2026-09-08'},1]])test(`AND filters ${JSON.stringify(query)}`,async()=>{assert.equal((await setup().service.search(query)).summary.found,count);});
+test('validation and export maximum never silently truncate',async()=>{const f=setup();for(const q of [{page:0},{repairFrom:'2026-02-30'},{repairFrom:'2026-09-10',repairTo:'2026-09-09'}])await assert.rejects(f.service.search(q));const g=setup(Array.from({length:EXPORT_LIMIT+1},(_,i)=>row(i)));await assert.rejects(g.service.search({export:true}),/limited to 5000/);assert.equal((await g.service.search()).results.length,50);});
+test('dedicated endpoint pages Feishu with GET and performs no record writes',async t=>{
+ const methods=[];t.mock.method(globalThis,'fetch',async(url,init)=>{methods.push([url,init.method]);if(url.includes('tenant_access_token'))return Response.json({code:0,tenant_access_token:'token',expire:7200});if(url.includes('/fields'))return Response.json({code:0,data:{items:[]}});return Response.json({code:0,data:{items:[row(url.includes('page_token')?2:1)],has_more:!url.includes('page_token'),page_token:'next'}});});
+ const response=await handleRequest(new Request('https://api.example/api/tineco-toc/inventory/search',{method:'POST',body:'{}'}),{FEISHU_PACKAGE_TABLE_ID:'packages',FEISHU_CLIENT_TABLE_ID:'clients',FEISHU_APP_ID:'inventory-test',FEISHU_APP_SECRET:'secret',FEISHU_BASE_APP_TOKEN:'base',FEISHU_TINECO_TOC_UNIT_TABLE_ID:'tblztQK3EhDAw2Wm'});
+ assert.equal(response.status,200);assert.equal((await response.json()).data.summary.found,2);assert.ok(methods.filter(([u])=>u.includes('/bitable/')).every(([,m])=>m==='GET'));
+});

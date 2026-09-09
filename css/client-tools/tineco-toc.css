@@ -1,0 +1,64 @@
+.tcu-app { display:grid; gap:18px; }.tcu-panel { padding:24px; border:1px solid var(--border-color); border-top:5px solid #437ea9; border-radius:16px; background:var(--panel-bg); }.tcu-panel h3 { margin-top:0; }.tcu-stage-1 { border-top-color:#d58a21; }.tcu-stage-2,.tcu-success { border-top-color:#27855a; }
+.tcu-progress { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:0; }.tcu-progress button { display:flex; align-items:center; justify-content:center; min-width:0; min-height:56px; margin:0; padding:12px; line-height:1.3; text-align:center; border:2px solid var(--border-color); border-radius:10px; background:var(--panel-bg); color:var(--text-secondary); }.tcu-progress [aria-current] { border-color:var(--current-client-color); color:var(--text-primary); font-weight:800; opacity:1; }
+.tcu-app label { display:grid; gap:8px; margin-bottom:18px; font-size:13px; font-weight:700; }.tcu-app input,.tcu-app textarea,.tcu-app select { width:100%; padding:12px; min-height:46px; border:1px solid var(--border-color); border-radius:9px; background:var(--panel-bg); color:var(--text-primary); }.tcu-app fieldset { margin:0; padding:0; border:0; min-width:0; }.tcu-app fieldset:disabled { opacity:.7; }.tcu-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }.tcu-actions .button { min-height:46px; }.tcu-actions summary { cursor:pointer; padding:12px; }.tcu-muted { color:var(--text-muted); font-size:12px; }.tcu-app [role=alert] { color:var(--danger,#b3262d); white-space:pre-wrap; }.tcu-app dd { margin:4px 0 14px; overflow-wrap:anywhere; }
+@media(max-width:600px) { .tcu-panel { padding:16px; }.tcu-progress { gap:8px; }.tcu-progress button { padding:10px 4px; font-size:11px; }.tcu-actions { flex-direction:column; align-items:stretch; } }
+
+.tcu-actions { display:grid; gap:22px; margin-top:24px; }
+.tcu-main-action .button { min-height:52px; padding-inline:24px; }
+.tcu-exit-actions { padding:18px; border:1px solid #c18b3a; border-radius:12px; background:color-mix(in srgb,#d58a21 9%,var(--panel-bg)); }
+.tcu-exit-actions h4 { margin:0 0 6px; }.tcu-exit-actions p { margin:0 0 14px; color:var(--text-secondary); }.tcu-exit-actions>div { display:flex; flex-wrap:wrap; gap:12px; }
+.tcu-cancel-action { display:flex; flex-wrap:wrap; align-items:center; gap:14px; padding-top:16px; border-top:1px solid var(--border-color); }.tcu-cancel-action span { color:var(--text-muted); font-size:13px; }
+.tcu-part-entry { display:flex; gap:12px; }.tcu-part-entry input { flex:1; min-width:0; }.tcu-part-entry .button { white-space:nowrap; }
+.tcu-part-list { padding:0; list-style:none; margin-bottom:22px; display:grid; gap:8px; }.tcu-part-list li { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:8px 12px; background:var(--panel-secondary); border:1px solid var(--border-color); border-radius:8px; }.tcu-part-list span { overflow-wrap:anywhere; }.tcu-part-list button { min-width:44px; min-height:44px; font-size:24px; border:0; border-radius:6px; background:var(--panel-bg); color:var(--text-primary); cursor:pointer; }
+.tcu-success { padding:clamp(24px,4vw,48px); }.tcu-saved-label { font-size:13px; font-weight:800; letter-spacing:.08em; }.tcu-success header h3 { font-size:clamp(30px,4vw,46px); margin:12px 0; }.tcu-success header { border-bottom:1px solid var(--border-color); padding-bottom:20px; }
+.tcu-summary-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:24px 0; }.tcu-summary-grid>div { padding:18px; border-radius:12px; background:var(--panel-secondary); }.tcu-summary-grid dt { color:var(--text-secondary); font-size:12px; font-weight:700; }.tcu-summary-grid dd { margin:10px 0 0; font-size:22px; font-weight:700; }.tcu-saved-parts pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }.tcu-success #tcu-next-unit { min-height:56px; padding-inline:28px; margin-top:12px; }
+@media(max-width:900px) { .tcu-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:600px) { .tcu-summary-grid { grid-template-columns:1fr; }.tcu-part-entry { flex-direction:column; }.tcu-exit-actions>div { flex-direction:column; }.tcu-main-action .button,.tcu-success #tcu-next-unit { width:100%; } }
+
+.tcu-app .tcu-next-repair { background:#a9620a; color:#fff; }
+.tcu-app .tcu-next-final { background:#21764c; color:#fff; }
+.tcu-resume-banner { border:1px solid var(--border-color); background:var(--panel-secondary); padding:16px; border-radius:10px; margin-bottom:20px; }
+
+/* Desktop scanner station; scoped to the initial form only. */
+.tcu-app:has(#tcu-start) { width:100%; min-width:0; justify-self:center; }
+#tcu-start { width:100%; min-width:0; box-sizing:border-box; padding:clamp(22px,4vw,44px); }
+#tcu-start h3 { font-size:clamp(20px,2.2vw,28px); margin-bottom:28px; }
+#tcu-start label { font-size:15px; gap:12px; margin-bottom:24px; }
+#tcu-start #tcu-sn { width:100%; min-width:0; box-sizing:border-box; height:80px; font-size:clamp(22px,2.5vw,30px); padding:16px 20px; }
+#tcu-start .button { min-height:60px; min-width:220px; max-width:100%; font-size:18px; padding:16px 28px; }
+@media(max-width:600px) { #tcu-start { padding:20px; } #tcu-start #tcu-sn { height:66px; padding:12px; } #tcu-start .button { width:100%; min-width:0; } }
+
+/* Operational status stays visible beside the workflow at scanner stations. */
+.tcu-workspace { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(300px,1fr); gap:18px 24px; align-items:start; min-width:0; }
+/* Cards share the same grid row; stage navigation occupies its own row above. */
+.tcu-workspace > .tcu-panel,.tcu-workspace > .tcu-status { margin:0; min-width:0; align-self:start; }
+.tcu-workspace > .tcu-panel,.tcu-workspace > .tcu-progress { grid-column:1; }
+.tcu-workspace > .tcu-status { grid-column:2; grid-row:1; }
+.tcu-workspace:has(> .tcu-progress) > .tcu-panel,.tcu-workspace:has(> .tcu-progress) > .tcu-status { grid-row:2; }
+.tcu-status { --tcu-status-color:#437ea9; padding:clamp(24px,3vw,40px); min-width:0; border:1px solid var(--border-color); border-top:5px solid var(--tcu-status-color); border-radius:16px; background:color-mix(in srgb,var(--tcu-status-color) 9%,var(--panel-bg)); overflow-wrap:anywhere; }
+.tcu-status-label { display:block; font-size:13px; font-weight:800; letter-spacing:.08em; color:var(--text-secondary); }
+.tcu-status h3 { margin:20px 0 14px; font-size:clamp(28px,3vw,40px); line-height:1.15; color:var(--text-primary); }
+.tcu-status p { margin:0; font-size:16px; line-height:1.6; color:var(--text-secondary); }
+.tcu-status.is-new,.tcu-status.is-completed { --tcu-status-color:#27855a; }
+.tcu-status.is-disposal { --tcu-status-color:#596373; }
+.tcu-status.is-conflict,.tcu-status.is-error { --tcu-status-color:#b3262d; }
+.tcu-status-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; margin:26px 0 0; padding-top:24px; border-top:1px solid var(--border-color); }
+.tcu-status-summary dt { font-size:13px; color:var(--text-secondary); }
+.tcu-status-summary dd { margin:6px 0 0; font-size:21px; font-weight:750; }
+.tcu-status-spinner { display:block; width:26px; height:26px; margin-top:22px; border:3px solid var(--border-color); border-top-color:var(--tcu-status-color); border-radius:50%; animation:tcu-status-spin 1s linear infinite; }
+@keyframes tcu-status-spin { to { transform:rotate(360deg); } }
+@media(prefers-reduced-motion:reduce) { .tcu-status-spinner { animation:none; } }
+@media(max-width:900px) {
+  .tcu-workspace { grid-template-columns:minmax(0,1fr); gap:18px; }
+  .tcu-workspace > .tcu-status,.tcu-workspace:has(> .tcu-progress) > .tcu-status { grid-column:1; grid-row:1; }
+  .tcu-workspace > .tcu-panel,.tcu-workspace:has(> .tcu-progress) > .tcu-panel { grid-row:auto; }
+}
+@media(max-width:600px) { .tcu-status { padding:22px; }.tcu-status-summary { gap:16px; } }
+
+.tcu-status.is-recovering { --tcu-status-color:#a9620a; }
+.tcu-status .tcu-save-help { margin-top:24px; }
+.tcu-status #tcu-keep-unit { margin-top:16px; min-height:46px; max-width:100%; white-space:normal; }
+
+.tcu-status.is-ready-0,.tcu-status.is-transition { --tcu-status-color:#437ea9; }
+.tcu-status.is-ready-1 { --tcu-status-color:#a9620a; }
+.tcu-status.is-ready-2 { --tcu-status-color:#27855a; }
