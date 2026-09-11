@@ -68,19 +68,30 @@
   }
 
   function renderDashboard() {
-    const allTools = window.MkiteToolRegistry.all();
-    const featured = allTools.filter((tool) => tool.status === "active");
-    const planned = allTools.filter((tool) => tool.status !== "active").slice(0, 2);
+    const inHouseTools = window.MkiteInHouseToolRegistry.all();
+    const clientTools = window.MkiteClientToolRegistry.filter();
+    const clientGroups = [...new Set(clientTools.map(tool => tool.clientId))];
+    const benefitItems = [[icons.match, 'Higher<br>Efficiency'], [icons.count, 'Real-time<br>Visibility'], [icons.parts, 'Stronger<br>Teamwork'], [icons.quality, 'Safer<br>Operations']];
+    const kpis = [[icons.warehouse, 'Packages Processed'], [icons.sort, 'Active Picking Lists'], [icons.parts, 'Active Users'], [icons.count, 'Avg. Processing Time']];
+    const dashboardInHouseCard = tool => {
+      const active = tool.status === 'active';
+      return `<button class="dashboard-tool-card" type="button" data-in-house-tool-id="${escapeHtml(tool.id)}" data-dashboard-theme="${escapeHtml(tool.cardTheme || tool.theme || tool.id)}"${active ? '' : ' disabled'}><span class="dashboard-tool-icon">${icons[tool.icon] || icons.warehouse}</span><span class="dashboard-tool-copy"><span class="dashboard-tool-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.name)}</strong><span>${escapeHtml(tool.description)}</span></span><span class="dashboard-tool-version">${escapeHtml(tool.version)} · ${active ? 'Active' : escapeHtml(tool.status)}</span>${active ? `<span class="dashboard-card-arrow">${icons.arrow}</span>` : ''}</button>`;
+    };
+    const dashboardClientCard = clientId => {
+      const group = clientTools.filter(tool => tool.clientId === clientId);
+      const active = group.some(tool => tool.status === 'active');
+      return `<button class="dashboard-client-card" type="button" data-route="client-tools" data-client-group="${escapeHtml(clientId)}"><span class="dashboard-client-icon">${clientId === 'B044' ? icons.parts : icons.repair}</span><span class="dashboard-client-copy"><span class="dashboard-client-title"><strong>${escapeHtml(clientId)}</strong><span class="dashboard-client-status">${active ? 'Active' : 'Unavailable'}</span></span><span>${group.length} ${group.length === 1 ? 'Client Tool' : 'Client Tools'}</span></span></button>`;
+    };
     mainContent.innerHTML = `<div class="dashboard-view">
       <section class="dashboard-intro" aria-labelledby="dashboard-title">
-        <span class="dashboard-eyebrow">Operations workspace</span>
-        <div class="dashboard-intro-copy"><div><h2 id="dashboard-title">Warehouse Tools</h2><p>Fast utilities for daily warehouse operations.</p></div><span class="dashboard-availability"><i></i>${featured.length} general tools ready</span></div>
-        <div class="dashboard-search"><div class="search-field">${icons.search}<label class="sr-only" for="tool-search">Search tools</label><input id="tool-search" type="search" placeholder="What do you need to do?" autocomplete="off"><button class="icon-button search-clear" id="search-clear" type="button" aria-label="Clear search">×</button></div><kbd>/</kbd></div>
+        <div class="dashboard-hero-copy"><span class="dashboard-eyebrow">Smart tools. Stronger operations.</span><h2 class="dashboard-title" id="dashboard-title"><strong>MKITE</strong><span>Warehouse Tools</span></h2><p class="dashboard-subtitle">Streamline today. A more efficient tomorrow.</p><ul class="dashboard-benefits">${benefitItems.map(([icon, label]) => `<li>${icon}<span>${label}</span></li>`).join('')}</ul></div>
+        <div class="dashboard-hero-visual" aria-hidden="true"><p class="dashboard-slogan">Real tools.<br>Real operations.<br>A cleaner tomorrow.</p></div>
+        <div class="dashboard-search"><div class="search-field">${icons.search}<label class="sr-only" for="tool-search">Search tools</label><input id="tool-search" type="search" placeholder="Search tools, clients, or keywords..." autocomplete="off"><button class="icon-button search-clear" id="search-clear" type="button" aria-label="Clear search">×</button></div></div>
       </section>
-      <div id="dashboard-catalog">
-        <section class="featured-section"><div class="section-header"><h3>Featured tools</h3><span>Ready to use</span></div><div class="featured-tools">${featured.map((tool, index) => toolCard(tool, `tool-card-featured featured-${index + 1}`)).join("")}</div></section>
-        <section class="planned-section"><div class="section-header"><h3>Expanding the toolbox</h3><span>${planned.length} planned</span></div><div class="planned-tools">${planned.map((tool) => toolCard(tool, "tool-card-planned")).join("")}</div></section>
-        <section class="platform-section"><div class="section-header"><h3>MKITE Operations</h3><span>Internal platform</span></div><button class="platform-card" type="button" data-route="in-house-tools"><span class="in-house-mark">${icons.receiving}</span><span><strong>In House Tools</strong><p>Internal warehouse operations and management tools, beginning with Receiving.</p></span><span class="platform-card-meta">1 active tool</span><span class="in-house-card-arrow">${icons.arrow}</span></button></section>
+      <div class="dashboard-content" id="dashboard-catalog">
+        <section class="dashboard-kpis" aria-label="Warehouse metrics">${kpis.map(([icon, label]) => `<article class="dashboard-kpi"><span class="dashboard-kpi-icon">${icon}</span><span class="dashboard-kpi-copy"><strong class="dashboard-kpi-value">—</strong><span class="dashboard-kpi-label">${label}</span></span></article>`).join('')}</section>
+        <section class="dashboard-section"><div class="dashboard-section-heading"><div><h3>In House Tools</h3><p>Internal warehouse operations and management tools.</p></div><button class="dashboard-view-all" type="button" data-route="in-house-tools">View all ${icons.arrow}</button></div><div class="dashboard-in-house-grid">${inHouseTools.map(dashboardInHouseCard).join('')}</div></section>
+        <section class="dashboard-section dashboard-client-section"><div class="dashboard-section-heading"><div><h3>Client Tools</h3><p>Dedicated tools for specific clients and workflows.</p></div><button class="dashboard-view-all" type="button" data-route="client-tools">View all ${icons.arrow}</button></div><div class="dashboard-client-grid">${clientGroups.map(dashboardClientCard).join('')}<div class="dashboard-client-card is-more"><span class="dashboard-client-icon">${icons.warehouse}</span><span class="dashboard-client-copy"><span class="dashboard-client-title"><strong>More Clients</strong></span><span>Coming Soon</span></span></div></div></section>
       </div>
     </div>`;
     const input = document.getElementById("tool-search"); const clear = document.getElementById("search-clear"); const catalog = document.getElementById("dashboard-catalog");

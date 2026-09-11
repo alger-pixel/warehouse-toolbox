@@ -12,32 +12,57 @@ html,body,.app-shell,.workspace,.main-content { min-width:0; }
   .tool-card-featured { min-height:280px; grid-template-columns:auto minmax(0,1fr); }
   .tool-card-featured .tool-arrow { grid-column:2; grid-row:2; }
   .page-header,.tool-hero { gap:24px; }
+  .dashboard-content { width:calc(100% - 48px); }
+  .dashboard-intro { padding-inline:32px; }
+  .dashboard-benefits li { min-width:0; padding-inline:15px; }
+  .dashboard-search { right:82px; width:min(379px,42vw); }
+  .dashboard-in-house-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 
-@media (max-width:767px) {
+@media (max-width:800px) {
   .sidebar,.app-shell.is-collapsed .sidebar { width:min(300px,88vw); transform:translateX(-101%); box-shadow:var(--shadow); }
   .app-shell.is-collapsed .brand-logo,.app-shell.is-collapsed .nav-item span,.app-shell.is-collapsed .version { opacity:1; pointer-events:auto; }
   .app-shell.is-collapsed .sidebar-header { min-height:104px; padding:20px 14px 18px 18px; }
   .app-shell.is-collapsed .brand { width:auto; height:60px; flex:1; justify-content:flex-start; padding:6px 8px; }
   .app-shell.is-collapsed .brand-logo { width:100%; max-width:148px; height:100%; flex:initial; object-position:left center; }
   .app-shell.is-collapsed .collapse-button,.collapse-button { display:none; }
+  .app-shell.is-collapsed .sidebar-mission,.sidebar-mission { opacity:1; pointer-events:auto; }
   .app-shell.is-collapsed .nav-item { justify-content:flex-start; gap:13px; padding-inline:13px; }
   .app-shell.is-mobile-open .sidebar { transform:translateX(0); }
   .sidebar-backdrop { position:fixed; z-index:25; inset:0; border:0; background:rgba(5,9,14,.58); opacity:0; pointer-events:none; transition:opacity var(--transition); }
   .app-shell.is-mobile-open .sidebar-backdrop { display:block; opacity:1; pointer-events:auto; }
   .workspace,.app-shell.is-collapsed .workspace { margin-left:0; }
-  .menu-button { display:inline-grid; }
+  .topbar .menu-button { display:inline-grid; }
   .topbar { padding-inline:18px; }
   .form-grid { grid-template-columns:1fr; }
   .stats-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .dashboard-intro-copy { align-items:flex-start; flex-direction:column; gap:20px; }
-  .dashboard-intro h2 { font-size:clamp(42px,10vw,62px); }
+  .app-shell:has(.dashboard-view) .topbar-left>div { display:block; }
+  .dashboard-intro { height:auto; min-height:282px; padding:28px 24px; }
+  .dashboard-hero-visual { width:40%; opacity:.5; }
+  .dashboard-title strong { font-size:52px; }.dashboard-title span { font-size:39px; }
+  .dashboard-benefits { flex-wrap:wrap; gap:16px 0; }
+  .dashboard-benefits li { width:50%; min-width:0; }
+  .dashboard-benefits li:nth-child(3) { padding-left:0; border-left:0; }
+  .dashboard-search { position:relative; top:auto; right:auto; width:100%; margin-top:24px; }
+  .dashboard-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .dashboard-in-house-grid { grid-template-columns:1fr; }
+  .dashboard-client-grid { grid-template-columns:1fr; }
+  .dashboard-tool-card { height:145px; }
   .featured-tools,.library-view .tool-grid { grid-template-columns:1fr; }
   .tool-card-featured { min-height:250px; }
   .page-header,.tool-hero,.tool-actions { align-items:flex-start; flex-direction:column; }
   .tool-actions { width:100%; }
   .tool-actions .button { min-height:44px; }
   table { min-width:620px; }
+}
+
+@media (max-width:600px) {
+  .dashboard-intro { padding-inline:24px; }
+  .dashboard-hero-visual { display:none; }
+  .dashboard-title strong { font-size:44px; }
+  .dashboard-title span { font-size:32px; }
+  .dashboard-benefits li { padding-right:10px; gap:9px; font-size:9px; }
+  .dashboard-kpis { grid-template-columns:1fr; }
 }
 
 @media (max-width:479px) {
@@ -51,18 +76,18 @@ html,body,.app-shell,.workspace,.main-content { min-width:0; }
   .tool-grid { grid-template-columns:1fr; }
   .tool-card { min-height:158px; padding:21px; }
   .panel { padding:20px; }
-  .dashboard-eyebrow { margin-bottom:16px; }
-  .dashboard-intro h2 { font-size:clamp(38px,12vw,46px); }
-  .dashboard-intro p { font-size:16px; }
-  .dashboard-search { margin-top:30px; }
+  .dashboard-content { width:calc(100% - 28px); }
+  .dashboard-eyebrow { margin-bottom:10px; font-size:9px; }
+  .dashboard-title strong { font-size:42px; }.dashboard-title span { font-size:31px; }
+  .dashboard-subtitle { font-size:16px; }
   .dashboard-search .search-field input { height:58px; font-size:15px; }
-  .dashboard-search>kbd { display:none; }
-  .featured-section { margin-top:40px; }
-  .tool-card-featured { min-height:260px; display:flex; padding:26px; }
-  .tool-card-featured .tool-arrow { margin-top:auto; }
-  .planned-section { margin-top:44px; }
-  .planned-tools { grid-template-columns:1fr; }
-  .tool-card-planned { min-height:150px; }
+  .dashboard-kpis { grid-template-columns:1fr; }
+  .dashboard-section-heading { min-height:0; margin:22px 0 12px; }
+  .dashboard-tool-card { height:auto; min-height:156px; grid-template-columns:48px minmax(0,1fr); gap:15px; }
+  .dashboard-tool-icon { width:48px; height:48px; }
+  .dashboard-tool-version { left:82px; }
+  .dashboard-card-arrow { display:none; }
+  .dashboard-client-card { height:96px; }
   .library-view .tool-card { min-height:180px; }
   .toast-region { right:12px; bottom:12px; width:calc(100vw - 24px); }
 }
