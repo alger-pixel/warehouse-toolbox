@@ -7,5 +7,8 @@
     "test": "node --test",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "scrypt-js": "3.0.1"
   }
 }

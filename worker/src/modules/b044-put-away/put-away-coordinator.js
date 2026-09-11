@@ -1,3 +1,4 @@
+import { managementAuthorized } from '../users/user-controller.js';
 import { getFeishuConfig } from '../../config/feishu-config.js';
 import { createFeishuAuthService } from '../../services/feishu-auth-service.js';
 import { createFeishuRecordService } from '../../services/feishu-record-service.js';
@@ -13,14 +14,18 @@ export class B044PutAwayCoordinator {
     this.tail = run.catch(() => {}); return run;
   }
   async handle(request) {
+    const recovery = new URL(request.url).pathname === '/admin-recover';
+    if (recovery && !await managementAuthorized(request, this.env)) return Response.json({ ok: false, error: { code: 'ADMIN_KEY_REQUIRED', message: 'Administration authorization required.' } }, { status: 401 });
+    const reconcile = new URL(request.url).pathname.endsWith('/reconcile');
     const complete = new URL(request.url).pathname.endsWith('complete-package');
     const cancel = new URL(request.url).pathname.endsWith('cancel-picking-list');
     // Correlation IDs are server-generated UUIDs, never arbitrary input in logs.
     const forwardedId = request.headers.get('X-Request-ID');
     const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwardedId || '') ? forwardedId : crypto.randomUUID();
-    const diagnostic = { route: complete ? 'b044-complete' : cancel ? 'b044-cancel' : 'b044-create', requestId, stage: 'CONFIGURE', operationState: 'unknown' };
+    const diagnostic = { route: recovery ? 'b044-admin-recover' : reconcile ? 'b044-reconcile' : complete ? 'b044-complete' : cancel ? 'b044-cancel' : 'b044-create', requestId, stage: 'CONFIGURE', operationState: 'unknown' };
     const onStage = (stage, metadata = {}) => {
       if (stage) diagnostic.stage = stage;
+      for (const key of ['partsPayloadExists', 'plRecordFound', 'plUpdateAttempted']) if (typeof metadata[key] === 'boolean') diagnostic[key] = metadata[key];
       if (metadata.operationState) diagnostic.operationState = metadata.operationState;
       if (Number.isInteger(metadata.eligibleCount)) diagnostic.eligibleCount = metadata.eligibleCount;
     };
@@ -30,7 +35,7 @@ export class B044PutAwayCoordinator {
       const service = createB044PutAwayService(config, records, pickingLists, this.ctx.storage, { onStage });
       onStage('READ_REQUEST');
       const input = await request.json();
-      const data = await (complete ? service.complete(input) : cancel ? service.cancel(input) : service.create(input));
+      const data = await (recovery ? service.adminRecover(input) : reconcile ? service.reconcile(input) : complete ? service.complete(input) : cancel ? service.cancel(input) : service.create(input));
       if (data.error) Object.assign(data.error, { stage: diagnostic.stage, operationState: diagnostic.operationState });
       console.log(JSON.stringify({ ...diagnostic, event: data.operational === false ? 'picking_list_not_operational' : 'picking_list_result', code: data.error?.code || 'OK', status: 200 }));
       return Response.json({ ok: true, data, requestId });

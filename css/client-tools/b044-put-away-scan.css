@@ -165,3 +165,20 @@
 /* Both preview figures have the original package label's physical width. */
 .pas-preview-grid { grid-template-columns:repeat(2,minmax(4in,1fr)); overflow-x:auto; }
 @media(max-width:1000px) { .pas-preview-grid { grid-template-columns:minmax(4in,1fr); } }
+
+.pas-parts-estimate { margin:16px 0; padding:16px; border:1px dashed var(--border-color); border-radius:10px; background:var(--panel-bg); }
+.pas-parts-estimate h3 { margin:0 0 8px; font-size:16px; }
+.pas-parts-estimate p { font-size:13px; color:var(--text-secondary); }
+.pas-parts-list { display:flex; flex-wrap:wrap; gap:12px; margin:16px 0; overflow-wrap:anywhere; }
+.pas-parts-list > * { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:8px 12px; border:1px solid var(--border-color); border-radius:8px; }
+.pas-actual-parts { max-width:900px; margin:auto; }
+.pas-actual-parts .pas-parts-estimate { text-align:left; }
+.pas-scan-mode.has-command-pending > main { display:block; overflow:auto; padding:12px 0; }
+.pas-scan-mode.has-command-pending main > * { max-width:900px; margin-left:auto; margin-right:auto; }
+.pas-scan-mode.has-command-pending h2 { font-size:clamp(28px,4vw,46px); line-height:1.1; letter-spacing:-.02em; }
+.pas-scan-mode .pas-parts-estimate { color:var(--text-primary); }
+.pas-scan-mode .pas-actual-parts > .pas-parts-list > * { border-color:#ffffff70; }
+.pas-scan-mode.has-command-pending main .button { background:#fff; color:#173b64; border:1px solid #cbd5e1; white-space:nowrap; }
+.pas-actual-parts .pas-scan-entry { display:flex; gap:10px; }
+.pas-actual-parts .pas-scan-entry input { flex:1; min-width:0; }
+.pas-actual-parts .pas-scan-entry .button { flex:0 0 auto; padding:16px 24px; }

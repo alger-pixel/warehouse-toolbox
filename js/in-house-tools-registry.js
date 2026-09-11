@@ -17,7 +17,8 @@
     {
       id: "move-location-by-sku", name: "Move Location by SKU", description: "Move an active package to a new warehouse location.", category: "Warehouse Operations", status: "active", version: "v0.1", theme: "location-move", icon: "warehouse", module: "moveLocationBySku", sortOrder: 2
     },
-    { id: "batch-inventory", name: "Batch Inventory", description: "Search package inventory and inspect activity history.", category: "Inventory Inquiry", status: "active", version: "v1", theme: "batch-inventory", icon: "warehouse", module: "batchInventory", sortOrder: 3 }
+    { id: "batch-inventory", name: "Batch Inventory", description: "Search package inventory and inspect activity history.", category: "Inventory Inquiry", status: "active", version: "v1", theme: "batch-inventory", icon: "warehouse", module: "batchInventory", sortOrder: 3 },
+    { id: "batch-picking-list", toolId: "batch-picking-list", route: "batch-picking-list", warehouse: "", clientId: "", toolType: "In-House Tool", name: "Batch Picking List", description: "Review Picking Lists and export confirmed parts usage.", category: "Inventory Inquiry", status: "active", version: "v1", theme: "batch-inventory", cardTheme: "batch-picking-list", icon: "warehouse", module: "batchPickingList", sortOrder: 4 }
   ];
 
   window.MkiteInHouseToolRegistry = {
@@ -28,4 +29,4 @@
       return this.all().filter((tool) => !value || `${tool.name} ${tool.description} ${tool.category}`.toLowerCase().includes(value));
     }
   };
-}(window));
+}(typeof window === "undefined" ? globalThis : window));

@@ -7,6 +7,7 @@
   const SUPPORTED_ORDER_PREFIXES = ["RMA", "RV"].sort((a, b) => b.length - a.length);
   const STATUS = { NOT_PRINTED: "NOT PRINTED", PRINTED: "PRINTED", REPRINTED: "REPRINTED" };
   const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, commandCache: [], pendingPackageId: null, pendingConfirmationTracking: null, creationRequestId: null });
+  let adminRecoveryKey = '';
   let context = null;
   let state = emptySession();
   let operationBusy = false; let lifecycle = 0;
@@ -108,6 +109,9 @@
   function restore() {
     const stored = context.storage.get(STORAGE_KEY, null);
     if (stored && Array.isArray(stored.packages) && Array.isArray(stored.invalidRows)) state = { ...emptySession(), ...stored };
+    // Migrate an existing pending session; never reuse the former Final Put Away SKU expectation.
+    delete state.pendingConfirmationSku;
+    state.pendingConfirmationTracking = state.pendingPackageId ? text(state.pl?.packages?.find(row => row.id === state.pendingPackageId)?.trackingNumber) : null;
   }
   function counts() {
     const packages = currentQueue();
@@ -230,7 +234,7 @@
         ${workflowPanel()}${state.file ? invalidTable() : ""}</div>
       </section>
       <section class="pas-workflow-step pas-execution${ready ? " is-ready" : ""}" aria-labelledby="pas-execution-title">
-        <header class="pas-step-header"><span class="pas-step-number" aria-hidden="true">02</span><div><h2 id="pas-execution-title">STEP 2 · SCAN &amp; PRINT EXECUTION</h2><p>Scan the package tracking number to print its label. Scan the same tracking number again to confirm the label printed successfully.</p></div></header>
+        <header class="pas-step-header"><span class="pas-step-number" aria-hidden="true">02</span><div><h2 id="pas-execution-title">STEP 2 · SCAN &amp; PRINT EXECUTION</h2><p>Scan the package tracking number to print its label. For commanded packages, scan actual parts first. Confirm completion by scanning the same In-House SKU / Tracking again.</p></div></header>
         <div class="pas-step-content"><div class="pas-execution-status" role="status"><strong>${ready ? "Ready for Scan &amp; Print" : (state.pl?.phase === "cancelled" ? "PICKING LIST CANCELLED · LOCKED" : "Complete Picking List Preparation first")}</strong><span>${ready ? `Picking list ${esc(state.pl.pickingListNumber)} · ${completed} / ${state.pl.packages.length} packages completed` : (state.pl?.phase === "cancelled" ? "Reset Page to prepare a new Picking List." : state.pl?.phase === "cancelling" ? "Cancellation is in progress. Scan & Print remains locked." : "Scan mode unlocks once your picking list is created and all eligible packages are assigned.")}</span></div>
         ${state.file ? `<div class="pas-overview pas-execution-stats">${stat("PL labels printed", totals.printed, "success")}${stat("Found packages remaining", totals.remaining)}${stat("Found packages", currentQueue().length)}${stat("PL packages completed", completed, "success")}</div>
         <div class="pas-actions pas-execution-actions"><div class="pas-action-feature"><button class="button button-primary pas-scan-start" id="pas-start-scan" type="button"${ready && !operationBusy ? "" : " disabled"}>Start Scan &amp; Print Mode</button><small>Continuous scan-to-print on kiosk-configured warehouse stations.</small></div><div class="pas-manual-actions"><div class="pas-action-feature"><button class="button button-secondary" id="pas-print-all" type="button"${currentQueue().length && !state.pendingPackageId ? "" : " disabled"}>PRINT FOUND PACKAGES</button><small>Print labels only for packages assigned to this Picking List.</small></div><button class="button button-secondary" id="pas-preview" type="button"${currentQueue().length ? "" : " disabled"}>PREVIEW FOUND PACKAGES</button></div></div>
@@ -261,6 +265,9 @@
     document.getElementById("pas-preview")?.addEventListener("click", renderPreview);
     document.getElementById("pas-print-all")?.addEventListener("click", printBatchWithDialog);
     document.getElementById("pas-start-scan")?.addEventListener("click", openScanMode);
+    document.getElementById("pas-start-new-pl")?.addEventListener("click", startNewPickingList);
+    document.getElementById('pas-admin-unlock')?.addEventListener('click', () => adminRecovery(false));
+    document.getElementById('pas-admin-recover')?.addEventListener('click', () => adminRecovery(true));
     document.getElementById("pas-reset")?.addEventListener("click", resetSession);
     document.getElementById("pas-remove-excel")?.addEventListener("click", removeExcel);
     document.getElementById("pas-cancel-pl")?.addEventListener("click", cancelPickingList);
@@ -288,11 +295,72 @@
   function usablePickingList() {
     return Boolean(state.pl?.operational && state.pl.pickingListNumber && state.pl.pickingListRecordId && !['cancelled', 'cancelling'].includes(state.pl.phase));
   }
+  function recoveryAvailable() {
+    return state.pl?.phase === 'admin-recovering' || state.pl?.packages?.some(r => r.packageStatus === 'Processed' && r.reconciliationRequired);
+  }
+  async function adminRecovery(confirm = false) {
+    if (operationBusy || !recoveryAvailable()) return;
+    const key = confirm ? adminRecoveryKey : document.getElementById('pas-admin-key')?.value;
+    if (!key) return;
+    if (confirm && !window.confirm('This is an administrative recovery for a broken TEST Picking List. It will revert eligible packages from incomplete Processed state so the Picking List can be cancelled. Historical audit notes will remain.')) return;
+    const typed = confirm ? window.prompt('Type the exact Picking List number to confirm test recovery:') : '';
+    if (confirm && typed !== state.pl.pickingListNumber) return;
+    operationBusy = true; const run = lifecycle; renderSetup();
+    try {
+      const result = await window.MkiteB044Picking.adminRecover({ pickingListNumber: state.pl.pickingListNumber, pickingListRecordId: state.pl.pickingListRecordId, confirm, confirmPickingListNumber: typed }, key);
+      if (!context || lifecycle !== run) return;
+      if (!confirm) adminRecoveryKey = key;
+      else {
+        adminRecoveryKey = ''; state.pl = result; state.creationRequestId = result.requestId;
+        state.temporaryParts = null; state.pendingPackageId = null; state.pendingConfirmationTracking = null; delete state.completedAt;
+        scanState = { type: 'ready', scan: '', candidateIds: [] }; state.workflowError = 'Administrative recovery complete. Use CANCEL PICKING LIST next.'; save();
+      }
+    } catch (error) { if (context && lifecycle === run) { adminRecoveryKey = ''; state.workflowError = error.message; if (confirm) { state.pl.phase = 'admin-recovering'; state.pl.operational = false; save(); } await reconcilePickingList(); } }
+    finally { if (context && lifecycle === run) { operationBusy = false; renderSetup(); } }
+  }
+  function adminRecoveryMarkup() {
+    if (!recoveryAvailable()) return '';
+    return adminRecoveryKey ? '<button class="button" id="pas-admin-recover">ADMIN RECOVER PL</button>' : '<details><summary>Administrative recovery access</summary><label>Administration key<input id="pas-admin-key" type="password" autocomplete="off"></label><button class="button" id="pas-admin-unlock">VERIFY ADMIN ACCESS</button></details>';
+  }
+  async function reconcilePickingList() {
+    if (!state.pl?.pickingListNumber || state.pl.phase === 'cancelled' || !window.MkiteB044Picking?.reconcile) return;
+    const run = lifecycle, pl = state.pl;
+    try {
+      const result = await window.MkiteB044Picking.reconcile({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId });
+      if (!context || run !== lifecycle || state.pl !== pl) return;
+      if (result.pickingListRecordId) pl.pickingListRecordId = result.pickingListRecordId;
+      for (const update of result.packages) {
+        const row = pl.packages.find(r => r.packageRecordId === update.packageRecordId);
+        if (!row) continue;
+        Object.assign(row, update);
+        if (row.reconciliationRequired && row.commandRaw && state.pendingPackageId === row.id) {
+          const draft = pendingParts(); draft.savePending = true;
+        }
+      }
+      if (result.cancellationAllowed === true && /CANCEL_PROCESSED_BLOCKED/.test(state.workflowError || '')) state.workflowError = '';
+      save();
+    } catch (error) { if (context && run === lifecycle) state.workflowError = 'Reconciliation required: ' + error.message; }
+    if (context && run === lifecycle) { if (scanModeOpen) renderScanMode(); else renderSetup(); }
+  }
+  function isTerminalPickingList() {
+    const pl = state.pl;
+    return Boolean(pl?.pickingListRecordId && (pl.phase === 'cancelled' ||
+      (pl.operational && pl.phase !== 'cancelling' && pl.packages?.length &&
+       !state.pendingPackageId && pl.packages.every(row => Boolean(row.completedAt) && !row.reconciliationRequired))));
+  }
+  function startNewPickingList() {
+    if (operationBusy || !isTerminalPickingList()) return;
+    clearLocalSession();
+    context.toast.show('Ready for a new Picking List');
+  }
+  function startNewAction() {
+    return isTerminalPickingList() ? `<button class="button button-primary" id="pas-start-new-pl" ${operationBusy ? 'disabled' : ''}>START NEW PICKING LIST</button>` : '';
+  }
   function hasProtectedOperation() {
-    return state.pl?.phase !== 'cancelled' && Boolean(state.pl?.pickingListRecordId || (state.creationRequestId && state.generationUncertain !== false));
+    return !isTerminalPickingList() && Boolean(state.pl?.pickingListRecordId || (state.creationRequestId && state.generationUncertain !== false));
   }
   function clearLocalSession() {
-    state = emptySession(); scanState = { type: 'ready', scan: '', candidateIds: [] };
+    lifecycle += 1; adminRecoveryKey = ''; state = emptySession(); scanState = { type: 'ready', scan: '', candidateIds: [] };
     previewOpen = false; scanModeOpen = false; context.storage.remove(STORAGE_KEY); renderSetup();
   }
   function removeExcel() {
@@ -307,18 +375,22 @@
   }
   async function cancelPickingList() {
     if (operationBusy || !state.pl?.pickingListRecordId || state.pl.phase === 'cancelled') return;
-    if (!window.confirm('Cancel this Picking List?\n\nUnfinished Processing packages will return to Active. Already Processed packages will remain Processed.\n\nThis action will stop further Scan & Print activity for this Picking List.')) return;
+    await reconcilePickingList();
+    if (!context || operationBusy || !state.pl?.pickingListRecordId) return;
+    if (state.pl.packages.some(r => r.packageStatus === 'Processed')) { context.toast.show('Cancellation blocked: a package is completed.'); return; }
+    if (!window.confirm('Cancel this Picking List? No package may be Processed. Processing packages will return to Active and temporary parts will be discarded.')) return;
     state.pl.phase = 'cancelling'; state.pl.operational = false; save();
     operationBusy = true; state.workflowError = ''; renderSetup(); const run = lifecycle;
     try {
       do {
         const result = await window.MkiteB044Picking.cancel({ pickingListNumber: state.pl.pickingListNumber, requestId: state.creationRequestId || state.pl.requestId });
         if (!context || run !== lifecycle) return;
-        state.pl = result; state.pendingPackageId = null; state.pendingConfirmationTracking = null; scanState = { type: "ready", scan: "", candidateIds: [] }; save();
+        state.pl = result; state.temporaryParts = null; state.pendingPackageId = null; state.pendingConfirmationTracking = null; scanState = { type: "ready", scan: "", candidateIds: [] }; save();
       } while (state.pl.phase === 'cancelling' && state.pl.cancelPendingCount > 0);
     } catch (error) {
       if (context && run === lifecycle) {
         state.workflowError = error.message;
+        if (error.code === 'CANCEL_PROCESSED_BLOCKED') { state.pl.phase = 'operational'; state.pl.operational = true; await reconcilePickingList(); }
         save();
       }
     } finally { if (context && run === lifecycle) { operationBusy = false; renderSetup(); } }
@@ -387,21 +459,70 @@
     scanState = { ...scanState, candidateIds: [item.id] };
     confirmCandidate(item);
   }
+  function possiblePartsMarkup(rows) {
+    const parts = window.MkitePickingParts?.aggregate(rows.map(r => window.MkitePickingParts.possible(r.commandRaw))) || [];
+    return parts.length ? `<section class="pas-parts-estimate"><h3>POSSIBLE PARTS</h3><p>Preparation estimate only. One suggestion per package mentioning the item; not confirmed usage.</p><div class="pas-parts-list">${parts.map(p => `<span>${esc(p.sku)} <strong>×${p.quantity}</strong></span>`).join('')}</div></section>` : '';
+  }
+  function pendingParts() {
+    const item = scanPackageById(state.pendingPackageId);
+    if (!item?.commandRaw) return null;
+    if (!state.temporaryParts || state.temporaryParts.packageId !== item.id) {
+      const intent = item.completionIntent;
+      state.temporaryParts = { packageId: item.id, parts: intent?.parts?.map(p => ({ ...p })) || [], ready: Boolean(intent), submitted: Boolean(intent) };
+    }
+    return state.temporaryParts;
+  }
+  function addPart(value) {
+    const draft = pendingParts(), sku = text(value);
+    if (!draft || draft.ready || draft.submitted || operationBusy || !sku) return;
+    const parts = draft.parts.map(p => ({ ...p })), found = parts.find(p => p.sku === sku);
+    if (found) found.quantity++; else parts.push({ sku, quantity: 1 });
+    try { draft.parts = window.MkitePickingParts.validate(parts); save(); }
+    catch (e) { context.toast.show(e.message); }
+    renderScanMode();
+  }
+  function removePart(index) {
+    const draft = pendingParts();
+    if (!draft || draft.ready || draft.submitted || operationBusy) return;
+    draft.parts.splice(index, 1); save(); renderScanMode();
+  }
+  function confirmParts() {
+    const draft = pendingParts(); if (!draft || operationBusy) return;
+    draft.ready = true; save(); renderScanMode();
+  }
+  function editParts() {
+    const draft = pendingParts(); if (!draft || draft.submitted || operationBusy) return;
+    draft.ready = false; save(); renderScanMode();
+  }
+  function partsBody(item, draft) {
+    return `<section class="pas-scan-ready pas-actual-parts"><h2>ACTUAL PART USED</h2><p>${esc(item.trackingNumber)} · Scan each physically used part. Repeated scans increase quantity.</p><label for="pas-scan-input">Scan Part SKU</label><div class="pas-scan-entry"><input id="pas-scan-input" autocomplete="off" maxlength="128"><button class="button" id="pas-scan-check">ADD PART</button></div><div class="pas-parts-list">${draft.parts.map((p,i) => `<div><strong>${esc(p.sku)} ×${p.quantity}</strong><button class="button" data-pas-remove-part="${i}" aria-label="Remove ${esc(p.sku)}">REMOVE</button></div>`).join('') || '<p>No actual parts scanned.</p>'}</div><p>Temporary only. Usage is saved after the correct In-House SKU / Tracking scan.</p><button class="button" id="pas-confirm-parts">CONFIRM PARTS USED</button>${possiblePartsMarkup([item])}</section>`;
+  }
   function renderScanMode() {
     const totals = counts(); const selected = scanState.candidateIds.length === 1 ? scanPackageById(scanState.candidateIds[0]) : null;
-    context.root.innerHTML = `<div class="pas-scan-mode state-${scanState.type}${scanState.error ? " is-confirmation-error" : ""}" role="dialog" aria-modal="true" aria-label="Put Away Scan and Print Mode"><header><strong>PUT AWAY SCAN · ${esc(state.pl.pickingListNumber)}</strong><button class="button pas-exit" id="pas-scan-exit" type="button">Exit Scan &amp; Print Mode</button></header><div class="pas-scan-counters"><span>${currentQueue().filter(r => r.completedAt).length} / ${currentQueue().length} COMPLETED</span><span>${state.pendingPackageId ? "WAITING FOR PRINT CONFIRMATION" : "WAITING FOR PACKAGE"}</span></div><main>${scanModeBody(selected)}</main></div>`;
+    context.root.innerHTML = `<div class="pas-scan-mode state-${scanState.type}${state.pendingPackageId && pendingParts() ? " has-command-pending" : ""}${scanState.error ? " is-confirmation-error" : ""}" role="dialog" aria-modal="true" aria-label="Put Away Scan and Print Mode"><header><strong>PUT AWAY SCAN · ${esc(state.pl.pickingListNumber)}</strong><button class="button pas-exit" id="pas-scan-exit" type="button">Exit Scan &amp; Print Mode</button></header><div class="pas-scan-counters"><span>${currentQueue().filter(r => r.completedAt || r.packageStatus === "Processed").length} / ${currentQueue().length} COMPLETED</span><span>${state.pendingPackageId ? (pendingParts() && !pendingParts().ready ? "PART USED SCAN" : "WAITING FOR PRINT CONFIRMATION") : "WAITING FOR PACKAGE"}</span></div><main>${scanModeBody(selected)}</main></div>`;
+    document.getElementById("pas-start-new-pl")?.addEventListener("click", startNewPickingList);
     document.getElementById("pas-scan-exit").addEventListener("click", closeScanMode);
     document.getElementById("pas-scan-input")?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); processScan(event.currentTarget.value); } });
     document.getElementById("pas-scan-check")?.addEventListener("click", () => processScan(document.getElementById("pas-scan-input").value));
     document.getElementById("pas-rescan")?.addEventListener("click", readyScan);
     document.getElementById("pas-confirm-print")?.addEventListener("click", () => confirmCandidate(selected));
     document.getElementById("pas-reprint")?.addEventListener("click", () => { if (!operationBusy) { printService.printSingleForScan(selected, true); if (!state.pendingPackageId) readyScan(); } });
+    document.getElementById("pas-confirm-parts")?.addEventListener("click", confirmParts);
+    document.getElementById("pas-edit-parts")?.addEventListener("click", editParts);
+    document.querySelectorAll("[data-pas-remove-part]").forEach(button => button.addEventListener('click', () => removePart(Number(button.dataset.pasRemovePart))));
     document.querySelectorAll("[data-pas-candidate]").forEach((button) => button.addEventListener("click", () => selectCandidate(button.dataset.pasCandidate)));
     window.setTimeout(() => document.getElementById("pas-scan-input")?.focus(), 0);
   }
   function scanModeBody(selected) {
-    if (currentQueue().every(r => r.completedAt)) return `<section class="pas-scan-result"><h2>PICKING LIST COMPLETE</h2><strong>${esc(state.pl.pickingListNumber)}</strong><p>${currentQueue().length} TOTAL COMPLETED</p><p>${esc(state.completedAt || currentQueue().map(r => r.completedAt).sort().at(-1))}</p></section>`;
-    if (state.pendingPackageId) return `${resultBody("LABEL PRINTED — CONFIRM PACKAGE", selected, "WAITING FOR PRINT CONFIRMATION")}${scanState.error ? `<div class="pas-confirm-error" role="alert"><h2>${esc(scanState.error)}</h2><p>Expected: ${esc(selected.trackingNumber)}</p><p>Scanned: ${esc(scanState.scan)}</p></div>` : ""}<section class="pas-scan-ready"><p>Scan the same In-house SKU / Tracking Number again: <strong>${esc(selected.trackingNumber)}</strong></p><div class="pas-scan-entry"><input id="pas-scan-input" autocomplete="off" aria-label="Tracking number print confirmation" ${operationBusy ? "disabled" : ""}><button class="button" id="pas-scan-check" ${operationBusy ? "disabled" : ""}>Confirm Label</button></div><button class="button" id="pas-reprint" ${operationBusy ? "disabled" : ""}>REPRINT LABEL</button></section>`;
+    if (currentQueue().every(r => r.completedAt)) return `<section class="pas-scan-result"><h2>PICKING LIST COMPLETE</h2><strong>${esc(state.pl.pickingListNumber)}</strong><p>${currentQueue().length} TOTAL COMPLETED</p><p>${esc(state.completedAt || currentQueue().map(r => r.completedAt).sort().at(-1))}</p>${startNewAction()}</section>`;
+    const draft = state.pendingPackageId ? pendingParts() : null;
+    if (draft && !draft.ready) return partsBody(selected, draft);
+    if (state.pendingPackageId && draft?.savePending && scanState.error !== "WRONG PACKAGE CONFIRMATION") return `${resultBody("PACKAGE CONFIRMED — PART USED SAVE PENDING", selected, "PACKAGE SCAN MATCHED")}
+      <section class="pas-scan-ready" role="status"><p>The package scan matched, but Part Used has not yet been confirmed in the Picking List record. Keep this unit and retry.</p>
+      <p>${esc(scanState.error || 'The original actual-parts list is retained for safe recovery.')}</p>
+      <p>Retry the same In-House SKU / Tracking: <strong>${esc(selected.trackingNumber)}</strong></p>
+      <div class="pas-scan-entry"><input id="pas-scan-input" autocomplete="off" aria-label="Retry In-House SKU / Tracking confirmation" ${operationBusy ? 'disabled' : ''}><button class="button" id="pas-scan-check" ${operationBusy ? 'disabled' : ''}>RETRY SAVE</button></div></section>`;
+    if (state.pendingPackageId) return `${draft ? `<p>Actual parts ready: ${draft.parts.reduce((n,p) => n+p.quantity,0)} units. ${draft.submitted ? 'Completion pending. Retry the same In-House SKU / Tracking scan; parts are locked for safe recovery.' : '<button class="button" id="pas-edit-parts">EDIT TEMPORARY PARTS</button>'}</p>` : ''}${resultBody("LABEL PRINTED — CONFIRM PACKAGE", selected, "WAITING FOR PRINT CONFIRMATION")}${scanState.error ? `<div class="pas-confirm-error" role="alert"><h2>${esc(scanState.error)}</h2><p>Expected: ${esc(selected.trackingNumber)}</p><p>Scanned: ${esc(scanState.scan)}</p></div>` : ""}<section class="pas-scan-ready"><p>Scan In-House SKU / Tracking to Confirm Package: <strong>${esc(selected.trackingNumber)}</strong></p><div class="pas-scan-entry"><input id="pas-scan-input" autocomplete="off" aria-label="In-House SKU / Tracking package confirmation" ${operationBusy ? "disabled" : ""}><button class="button" id="pas-scan-check" ${operationBusy ? "disabled" : ""}>Confirm Put Away</button></div><button class="button" id="pas-reprint" ${operationBusy ? "disabled" : ""}>REPRINT LABEL</button></section>`;
     if (scanState.type === "ready") return `<section class="pas-scan-ready"><span>Scan 跟踪号</span><h2>READY TO SCAN</h2><div class="pas-scan-entry"><label class="sr-only" for="pas-scan-input">Tracking number</label><input id="pas-scan-input" type="text" inputmode="text" autocomplete="off" placeholder="Scan or enter tracking number"><button class="button" id="pas-scan-check" type="button">Check</button></div></section>`;
     if (scanState.type === "matched") return resultBody("MATCHED", selected, "Label print initiated.");
     if (scanState.type === "not-found") return `<section class="pas-scan-result"><span>Scanned Value</span><h2>PACKAGE NOT FOUND</h2><p>No matching package in this Picking List.</p><strong>${esc(scanState.scan)}</strong><button class="button" id="pas-rescan" type="button">Rescan</button></section>`;
@@ -416,28 +537,32 @@
   function readyScan() { scanState = state.pendingPackageId ? { type: "WAITING_FOR_PRINT_CONFIRMATION", scan: "", candidateIds: [state.pendingPackageId] } : { type: "ready", scan: "", candidateIds: [] }; renderScanMode(); }
   function confirmCandidate(item) {
     if (!item || !currentQueue().includes(item) || state.pendingPackageId || operationBusy) return;
-    if (item.completedAt || item.packageStatus === "Processed") { scanState.type = "already"; renderScanMode(); return; }
-    state.pendingPackageId = item.id; state.pendingConfirmationTracking = text(item.trackingNumber); scanState = { type: "WAITING_FOR_PRINT_CONFIRMATION", scan: "", candidateIds: [item.id] }; save();
+    if (!item.reconciliationRequired && (item.completedAt || item.packageStatus === "Processed")) { scanState.type = "already"; renderScanMode(); return; }
+    state.temporaryParts = null; state.pendingPackageId = item.id; pendingParts(); state.pendingConfirmationTracking = text(item.trackingNumber); scanState = { type: "WAITING_FOR_PRINT_CONFIRMATION", scan: "", candidateIds: [item.id] }; save();
     printService.printSingleForScan(item, item.printCount > 0); renderScanMode();
   }
   async function processScan(value) {
     const entered = text(value); if (!entered || operationBusy || !usablePickingList()) return;
     if (state.pendingPackageId) {
       const item = scanPackageById(state.pendingPackageId);
+      const draft = pendingParts();
+      if (draft && !draft.ready) { addPart(entered); return; }
       state.pendingConfirmationTracking = text(item.trackingNumber);
       scanState = { type: "WAITING_FOR_PRINT_CONFIRMATION", scan: entered, candidateIds: [item.id] };
-      if (normalize(entered) !== normalize(state.pendingConfirmationTracking)) { scanState.error = "WRONG PACKAGE CONFIRMATION"; context.audio.warning(); renderScanMode(); return; }
+      if (!state.pendingConfirmationTracking || normalize(entered) !== normalize(state.pendingConfirmationTracking)) { scanState.error = "WRONG PACKAGE CONFIRMATION"; context.audio.warning(); renderScanMode(); return; }
+      if (draft) { draft.submitted = true; save(); }
       operationBusy = true; renderScanMode(); const run = lifecycle;
       try {
-        const result = await window.MkiteB044Picking.complete({ pickingListNumber: state.pl.pickingListNumber, pickingListRecordId: state.pl.pickingListRecordId, packageRecordId: item.packageRecordId, trackingNumber: item.trackingNumber, confirmationTracking: entered });
+        const result = await window.MkiteB044Picking.complete({ pickingListNumber: state.pl.pickingListNumber, pickingListRecordId: state.pl.pickingListRecordId, packageRecordId: item.packageRecordId, trackingNumber: item.trackingNumber, confirmationTracking: entered, ...(draft ? { partsReady: true, parts: draft.parts } : {}) });
         if (!context || run !== lifecycle) return;
-        item.completedAt = result.completedAt; item.packageStatus = result.status; state.pendingPackageId = null; state.pendingConfirmationTracking = null; if (result.pickingListComplete) state.completedAt = result.completedAt; save(); context.audio.success();
-      } catch (error) { if (context && run === lifecycle) { scanState.error = error.message; context.audio.failure(); } }
+        if (draft && result.partsPersisted !== true) throw new Error("PART USED persistence was not confirmed. Keep this unit and retry the same tracking scan against the updated Worker.");
+        item.actualParts = draft?.parts || []; state.temporaryParts = null; item.completedAt = result.completedAt; item.packageStatus = result.status; item.partsPersisted = result.partsPersisted; item.reconciliationRequired = false; state.pendingPackageId = null; state.pendingConfirmationTracking = null; if (result.pickingListComplete) state.completedAt = result.completedAt; save(); context.audio.success();
+      } catch (error) { if (context && run === lifecycle) { scanState.error = error.message; if (draft) { draft.savePending = true; save(); } await reconcilePickingList(); context.audio.failure(); } }
       finally { if (context && run === lifecycle) { operationBusy = false; if (scanModeOpen) { if (state.pendingPackageId) renderScanMode(); else readyScan(); } else renderSetup(); } }
       return;
     }
     const result = classifyScan(entered, currentQueue()); const exact = result.type === "EXACT" ? result.candidates[0] : null;
-    if (exact) { scanState = { type: (exact.completedAt || exact.packageStatus === "Processed") ? "already" : "matched", scan: entered, candidateIds: [exact.id] }; if (!exact.completedAt && exact.packageStatus !== "Processed") confirmCandidate(exact); else renderScanMode(); return; }
+    if (exact) { scanState = { type: (exact.completedAt || exact.packageStatus === "Processed") ? "already" : "matched", scan: entered, candidateIds: [exact.id] }; if (exact.reconciliationRequired || (!exact.completedAt && exact.packageStatus !== "Processed")) confirmCandidate(exact); else renderScanMode(); return; }
     const candidates = result.candidates;
     if (candidates.length === 1) { context.audio.warning(); scanState = { type: (candidates[0].completedAt || candidates[0].packageStatus === "Processed") ? "already" : "partial", scan: entered, candidateIds: [candidates[0].id] }; renderScanMode(); return; }
     if (candidates.length > 1) { context.audio.warning(); scanState = { type: "multiple", scan: entered, candidateIds: candidates.map(item => item.id) }; renderScanMode(); return; }
@@ -446,12 +571,12 @@
   function workflowPanel() {
     const prepared = state.prepared, pl = state.pl;
     const created = Boolean(pl?.pickingListRecordId), cancelled = pl?.phase === 'cancelled';
-    const lifecycleStatus = cancelled ? 'PICKING LIST CANCELLED' : pl?.operational ? 'PICKING LIST CREATED' : prepared?.eligible.length && !state.creationRequestId ? 'READY TO GENERATE' : 'PREPARING';
-    return `<section class="pas-picking-panel panel" aria-live="polite"><h3>${lifecycleStatus}</h3>${commandSummary()}<p>${operationBusy ? 'Working — keep this session open…' : esc(state.workflowError || (!cancelled && pl?.message) || (pl?.operational ? 'Picking List ready for warehouse scanning.' : cancelled ? `${pl.processingReturnedToActive || 0} unfinished packages returned to Active. ${pl.processedRetained || 0} completed packages remain Processed. ${pl.skipped || 0} packages skipped due to unexpected status. Reset the page to prepare a new Picking List.` : 'Upload and matching are read-only. Generate explicitly to assign eligible packages.'))}</p>
+    const lifecycleStatus = !cancelled && isTerminalPickingList() ? 'PICKING LIST COMPLETED' : cancelled ? 'PICKING LIST CANCELLED' : pl?.operational ? 'PICKING LIST CREATED' : prepared?.eligible.length && !state.creationRequestId ? 'READY TO GENERATE' : 'PREPARING';
+    return `<section class="pas-picking-panel panel" aria-live="polite"><h3>${lifecycleStatus}</h3>${pl?.packages?.some(r => r.reconciliationRequired) ? '<p role="status">SAVE PENDING / RECONCILIATION REQUIRED — Processed packages are counted below. Scan the affected tracking number to recover the pending save.</p>' : ''}${pl?.packages?.filter(r => r.reconciliationRequired && r.commandRaw).map(r => `<p>${esc(r.trackingNumber)} · PACKAGE STATUS: ${esc(r.packageStatus)} · PART USED SAVE PENDING</p>`).join('') || ''}${commandSummary()}${possiblePartsMarkup(pl?.packages || prepared?.eligible || [])}<p>${operationBusy ? 'Working — keep this session open…' : esc(state.workflowError || (!cancelled && pl?.message) || (pl?.operational ? 'Picking List ready for warehouse scanning.' : cancelled ? `${pl.processingReturnedToActive || 0} unfinished packages returned to Active. ${pl.processedRetained || 0} completed packages remain Processed. ${pl.skipped || 0} packages skipped due to unexpected status. Reset the page to prepare a new Picking List.` : 'Upload and matching are read-only. Generate explicitly to assign eligible packages.'))}</p>
       ${pl ? `<p><strong>${esc(pl.pickingListNumber)}</strong> · ${pl.succeeded.length} / ${pl.packages.length} ASSIGNED${pl.createdAt ? ` · Created ${esc(pl.createdAt)}` : ''}</p>${pl.failed.map(r => `<p class="pas-confirm-error">${esc(r.trackingNumber)}: ${esc(r.reason)}</p>`).join('')}` : ''}
-      <div class="pas-actions">
+      <div class="pas-actions">${startNewAction()}${adminRecoveryMarkup()}
       ${!created ? `<button class="button button-primary" id="pas-create-pl" ${operationBusy || (!prepared?.eligible.length && !state.creationRequestId) || ['blocked', 'persisting'].includes(pl?.phase) ? 'disabled' : ''}>${state.creationRequestId ? 'Retry / Resume Picking List' : 'GENERATE PICKING LIST'}</button><button class="button" id="pas-remove-excel" ${operationBusy || !state.file || hasProtectedOperation() ? 'disabled' : ''}>REMOVE EXCEL</button>` : ''}
-      ${created && !cancelled ? `<button class="button" id="pas-cancel-pl" ${operationBusy || !['operational', 'cancelling'].includes(pl.phase) ? 'disabled' : ''}>${pl.phase === 'cancelling' ? 'Retry Cancellation' : 'CANCEL PICKING LIST'}</button>` : ''}
+      ${created && !cancelled ? `<button class="button" id="pas-cancel-pl" ${operationBusy || pl.packages.some(r => r.packageStatus === 'Processed') || !['operational', 'cancelling'].includes(pl.phase) ? 'disabled' : ''}>${pl.phase === 'cancelling' ? 'Retry Cancellation' : 'CANCEL PICKING LIST'}</button>` : ''}
       ${created && pl.phase === 'assigning' ? '<button class="button button-primary" id="pas-create-pl">Retry / Resume Picking List</button>' : ''}
       <button class="button" id="pas-prepare" ${state.creationRequestId || operationBusy || !state.packages.length ? 'disabled' : ''}>Refresh Inventory Matching</button>
       <button class="button" id="pas-export-exceptions" ${prepared?.exceptions.length ? '' : 'disabled'}>EXPORT EXCEPTIONS</button>
@@ -487,9 +612,9 @@
 
   const module = {
     render,
-    init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; restore(); renderSetup(); },
-    cleanup() { lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.body.classList.remove("pas-printing"); document.getElementById("pas-print-host")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
-    _test: { commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
+    init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; restore(); renderSetup(); reconcilePickingList(); },
+    cleanup() { adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.body.classList.remove("pas-printing"); document.getElementById("pas-print-host")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
+    _test: { adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
   };
   window.MkiteClientToolModules["b044.put-away-scan"] = module;
 }(window, document));

@@ -9,7 +9,7 @@ export class TinecoTocCoordinator {
   async handle(request) {
     const action=new URL(request.url).pathname.slice(1);
     try {
-      if(!['begin','step','finish','cancel'].includes(action)) return Response.json({ok:false,error:{code:'NOT_FOUND',message:'Unknown repair action.'}},{status:404});
+      if(!['begin','step','finish','pause','cancel'].includes(action)) return Response.json({ok:false,error:{code:'NOT_FOUND',message:'Unknown repair action.'}},{status:404});
       const config=getFeishuConfig(this.env),records=createFeishuRecordService(createFeishuAuthService(config));
       const service=createTinecoService(config,records,this.ctx.storage);
       return Response.json({ok:true,data:await service[action](await request.json())});

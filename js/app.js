@@ -100,7 +100,7 @@
 
   function inHouseToolCard(tool) {
     const active = tool.status === "active";
-    return `<button class="in-house-card" type="button" data-in-house-tool-id="${escapeHtml(tool.id)}" data-in-house-theme="${escapeHtml(tool.theme || tool.id)}"${active ? "" : " disabled"}><span class="in-house-card-icon">${icons[tool.icon] || icons.warehouse}</span><span class="in-house-card-copy"><span class="in-house-card-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.name)}</strong><span>${escapeHtml(tool.description)}</span></span><span class="in-house-card-meta">${escapeHtml(active ? `${tool.version} · Active` : "Coming Soon")}</span>${active ? `<span class="in-house-card-arrow">${icons.arrow}</span>` : ""}</button>`;
+    return `<button class="in-house-card" type="button" data-in-house-tool-id="${escapeHtml(tool.id)}" data-in-house-theme="${escapeHtml(tool.cardTheme || tool.theme || tool.id)}"${active ? "" : " disabled"}><span class="in-house-card-icon">${icons[tool.icon] || icons.warehouse}</span><span class="in-house-card-copy"><span class="in-house-card-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.name)}</strong><span>${escapeHtml(tool.description)}</span></span><span class="in-house-card-meta">${escapeHtml(active ? `${tool.version} · Active` : "Coming Soon")}</span>${active ? `<span class="in-house-card-arrow">${icons.arrow}</span>` : ""}</button>`;
   }
 
   function renderInHouseTools() {
@@ -197,7 +197,7 @@
   function renderSettings() {
     const settings = getSettings();
     mainContent.innerHTML = `${pageHeader("Settings", "Application preferences and information.")}
-      <div class="workspace-stack"><section class="panel"><div class="panel-header"><div><h3>Appearance</h3><p>Preferences are stored in this browser.</p></div></div><div class="form-control"><label for="settings-theme">Theme</label><select class="select" id="settings-theme"><option value="dark"${settings.theme === "dark" ? " selected" : ""}>Dark</option><option value="light"${settings.theme === "light" ? " selected" : ""}>Light</option></select></div></section>
+      <div class="workspace-stack"><section class="panel"><h3>User Management</h3><p>Manage user accounts and warehouse, client and tool assignments.</p><button class="button button-primary" type="button" data-route="settings/users">USER MANAGEMENT</button></section><section class="panel"><div class="panel-header"><div><h3>Appearance</h3><p>Preferences are stored in this browser.</p></div></div><div class="form-control"><label for="settings-theme">Theme</label><select class="select" id="settings-theme"><option value="dark"${settings.theme === "dark" ? " selected" : ""}>Dark</option><option value="light"${settings.theme === "light" ? " selected" : ""}>Light</option></select></div></section>
       <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">Receiving Live Integration v0.3</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p></section></div>`;
     document.getElementById("settings-theme").addEventListener("change", (event) => setTheme(event.target.value));
   }
@@ -224,13 +224,14 @@
   function onRoute(route) {
     if (activeToolModule && activeToolModule.cleanup) activeToolModule.cleanup(); activeToolModule = null;
     let title;
-    if (route.view === "tool") title = window.MkiteToolRegistry.get(route.toolId)?.name || "Assisting Tools";
+    if (route.view === "settings/users") title = "User Management";
+    else if (route.view === "tool") title = window.MkiteToolRegistry.get(route.toolId)?.name || "Assisting Tools";
     else if (route.view === "in-house-tool") title = window.MkiteInHouseToolRegistry.get(route.toolId)?.name || "In House Tools";
     else if (route.view === "client-tool") title = window.MkiteClientToolRegistry.get(route.clientId, route.toolId, route.warehouse)?.name || "Client Tool";
     else if (route.view === "client") title = window.MkiteClientRegistry.get(route.clientId)?.name || "Client Tools";
     else title = route.view === "tools" ? "Assisting Tools" : route.view === "client-tools" ? "Client Tools" : route.view === "in-house-tools" ? "In House Tools" : route.view.charAt(0).toUpperCase() + route.view.slice(1);
     sectionTitle.textContent = title; document.title = `${title} | MKITE Warehouse Tools`;
-    const navigationRoute = route.view === "tool" ? "tools" : route.view === "in-house-tool" ? "in-house-tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
+    const navigationRoute = route.view === "settings/users" ? "settings" : route.view === "tool" ? "tools" : route.view === "in-house-tool" ? "in-house-tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
     document.querySelectorAll(".nav-item").forEach((item) => { const active = item.dataset.route === navigationRoute; item.classList.toggle("is-active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
     if (route.view === "dashboard") renderDashboard();
     else if (route.view === "tools") renderTools();
@@ -239,6 +240,7 @@
     else if (route.view === "client-tool") renderClientToolWorkspace(route.clientId, route.toolId, route.warehouse);
     else if (route.view === "in-house-tools") renderInHouseTools();
     else if (route.view === "in-house-tool") renderInHouseTool(route.toolId);
+    else if (route.view === "settings/users") { activeToolModule = window.MkiteUserManagement; mainContent.innerHTML = activeToolModule.render(); activeToolModule.init({ root: mainContent }); }
     else if (route.view === "settings") renderSettings();
     else renderTool(route.toolId);
     closeMobileMenu(); mainContent.focus({ preventScroll: true });

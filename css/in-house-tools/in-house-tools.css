@@ -1,6 +1,7 @@
 /* Shared MKITE-owned operational tool presentation. Business logic stays module-owned. */
 [data-in-house-theme="receiving"] { --current-in-house-color: var(--in-house-receiving); --current-in-house-soft: var(--in-house-receiving-soft); --current-in-house-text: var(--in-house-receiving-text); --current-in-house-soft-text: var(--in-house-receiving-soft-text); }
 [data-in-house-theme="location-move"] { --current-in-house-color:var(--in-house-move); --current-in-house-soft:var(--in-house-move-soft); --current-in-house-text:var(--in-house-move-text); --current-in-house-soft-text:var(--in-house-move-soft-text); }
+[data-in-house-theme="batch-picking-list"] { --current-in-house-color:#244a63; --current-in-house-text:#f8fbff; --current-in-house-soft:#dce8f0; --current-in-house-soft-text:#244a63; }
 .in-house-library,.in-house-tool-page { max-width:1260px; margin:0 auto; }
 .in-house-library .page-header { padding-top:10px; }
 .in-house-intro { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:32px; align-items:end; margin-bottom:44px; }
@@ -22,6 +23,9 @@
 .in-house-card-meta { grid-column:2; align-self:end; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
 .in-house-card-arrow { display:grid; width:42px; height:42px; grid-row:1/3; grid-column:3; place-items:center; align-self:end; border-radius:50%; background:color-mix(in srgb,currentColor 13%,transparent); }
 .in-house-card-arrow svg { width:19px; fill:none; stroke:currentColor; stroke-width:1.8; }
+[data-in-house-theme="batch-picking-list"].in-house-card .in-house-card-icon,
+[data-in-house-theme="batch-picking-list"].in-house-card .in-house-card-arrow { background:#5f86a3; color:#f8fbff; }
+[data-in-house-theme="batch-picking-list"].in-house-card .in-house-card-copy>span:last-child { color:rgba(255,255,255,.82); }
 .in-house-tool-hero { display:flex; min-height:210px; align-items:center; justify-content:space-between; gap:28px; margin-bottom:24px; padding:clamp(30px,4vw,50px); border-radius:28px; background:var(--current-in-house-color); color:var(--current-in-house-text); box-shadow:var(--shadow-sm); }
 .in-house-tool-hero h2 { margin:7px 0 10px; font-size:clamp(38px,5vw,56px); line-height:1; letter-spacing:-.055em; }
 .in-house-tool-hero p { max-width:680px; margin:0; color:color-mix(in srgb,currentColor 76%,transparent); }

@@ -20,3 +20,8 @@ OPENAI_COMMAND_MODEL=
 
 # Temporary, server-controlled safe fallback diagnostics in responses. Disable after investigation.
 OPENAI_COMMAND_DIAGNOSTICS=false
+
+# Milestone 1: existing USER CLASS table ID; do not guess.
+FEISHU_USER_TABLE_ID=
+# Secret-only random administration key (at least 32 characters). Never commit a real value.
+USER_MANAGEMENT_ADMIN_KEY=

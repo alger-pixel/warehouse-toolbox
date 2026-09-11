@@ -18,6 +18,10 @@
 .tcu-app .tcu-next-repair { background:#a9620a; color:#fff; }
 .tcu-app .tcu-next-final { background:#21764c; color:#fff; }
 .tcu-resume-banner { border:1px solid var(--border-color); background:var(--panel-secondary); padding:16px; border-radius:10px; margin-bottom:20px; }
+.tcu-general-note pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+#tcu-pause-dialog { width:min(480px,calc(100vw - 32px)); border:1px solid var(--border-color); border-radius:14px; padding:22px; color:var(--text-primary); background:var(--panel-bg); }
+#tcu-pause-dialog::backdrop { background:#0008; }
+#tcu-pause-dialog form>div { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:10px; }
 
 /* Desktop scanner station; scoped to the initial form only. */
 .tcu-app:has(#tcu-start) { width:100%; min-width:0; justify-self:center; }

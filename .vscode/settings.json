@@ -1,0 +1,15 @@
+{
+  "liveServer.settings.port": 5501,
+  "liveServer.settings.ignoreFiles": [
+    ".vscode/**",
+    "**/*.scss",
+    "**/*.sass",
+    "**/*.ts",
+    "**/node_modules/**",
+    "venv/**",
+    ".venv/**",
+    "worker/**",
+    ".wrangler/**",
+    "**/.wrangler/**"
+  ]
+}

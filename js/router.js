@@ -3,6 +3,7 @@
   let onChange = function () {};
   function parse(hash) {
     const value = String(hash || "").replace(/^#/, "");
+    if (value === "settings/users") return { view: "settings/users" };
     const inHouseToolMatch = value.match(/^in-house-tool\/([^/]+)$/);
     if (inHouseToolMatch) return { view: "in-house-tool", toolId: inHouseToolMatch[1] };
     const warehouseToolMatch = value.match(/^client\/([^/]+)\/([^/]+)\/tool\/([^/]+)$/);

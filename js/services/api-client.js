@@ -17,13 +17,15 @@
   }
 
   window.MkiteApiClient = {
-    async post(path, body) {
+    async post(path, body, options = {}) {
       const config = window.MkiteApiConfig;
-      if (!config.baseUrl) return { ok: false, error: { code: "API_NOT_CONFIGURED", message: "The secure MKITE API endpoint is not configured.", retryable: false } };
+      const baseUrl = path.startsWith("/api/users/") && config.userManagementBaseUrl
+        ? config.userManagementBaseUrl : config.baseUrl;
+      if (!baseUrl) return { ok: false, error: { code: "API_NOT_CONFIGURED", message: "The secure MKITE API endpoint is not configured.", retryable: false } };
       try {
-        const response = await window.fetch(`${config.baseUrl.replace(/\/$/, "")}${path}`, {
+        const response = await window.fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(options.authorization ? { Authorization: options.authorization } : {}) },
           body: JSON.stringify(body)
         });
         let payload = null;

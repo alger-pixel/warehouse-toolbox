@@ -14,7 +14,7 @@ function fixture(packages = [packageRecord('A')]) {
   const data = new Map(packages.map(r => [r.record_id, structuredClone(r)])); const events = []; const memory = new Map();
   const storage = { async get(k) { return structuredClone(memory.get(k)); }, async put(k, v) { memory.set(k, structuredClone(v)); } };
   const records = {
-    async listFields() { return [{ field_name: 'STATUS', type: 3, property: { options: ['Active', 'Processing', 'Processed'].map(name => ({ name })) } }]; },
+    async listFields() { return [{ field_name: 'PART USED', type: 1 }, { field_name: 'STATUS', type: 3, property: { options: ['Active', 'Processing', 'Processed'].map(name => ({ name })) } }]; },
     async listRecords({ tableId }) { events.push('list-' + tableId); return [...data.values()].filter(r => tableId === 'packages' ? r.record_id.startsWith('rec-') : r.record_id.startsWith('pl-')).map(r => structuredClone(r)); },
     async getRecord({ recordId }) { return structuredClone(data.get(recordId) || {}); },
     async createRecord({ fields }) { events.push('master'); const count = events.filter(e => e === 'master').length; const record = { record_id: count === 1 ? 'pl-master' : `pl-master-${count}`, fields }; data.set(record.record_id, structuredClone(record)); return record; },
@@ -65,7 +65,7 @@ test('completion validates server snapshot, exact tracking confirmation, status 
   for (const changes of [{ confirmationTracking: 'B044-ABC' }, { confirmationTracking: 'OTHER' }, { confirmationTracking: 'PREFIX-A-SUFFIX' }, { confirmationTracking: '' }, { confirmationTracking: undefined, expectedFinalSku: 'B044-ABC', confirmationSku: 'B044-ABC' }, { packageRecordId: 'rec-other' }, { pickingListRecordId: 'other' }]) await assert.rejects(f.service().complete({ ...input, ...changes }));
   assert.equal(f.data.get('rec-A').fields.STATUS, 'Processing');
   const done = await f.service().complete(input); assert.equal(done.pickingListComplete, true); assert.equal(f.data.get('rec-A').fields.STATUS, 'Processed'); assert.match(f.data.get('rec-A').fields.NOTE, / - DONE PUTTING AWAY$/);
-  const note = f.data.get('rec-A').fields.NOTE; await f.service().complete(input); assert.equal(f.data.get('rec-A').fields.NOTE, note); assert.deepEqual(f.data.get('pl-master'), detail);
+  const note = f.data.get('rec-A').fields.NOTE; await f.service().complete(input); assert.equal(f.data.get('rec-A').fields.NOTE, note); assert.ok(f.data.get('pl-master').fields['PICKING LIST DETAIL'].startsWith(detail.fields['PICKING LIST DETAIL'])); assert.equal(f.data.get('pl-master').fields['PICKING LIST DETAIL'].match(/COMPLETION:/g).length, 1);
 });
 test('missing STATUS field returns schema error before mutation', async () => {
   const f = fixture(); f.records.listFields = async () => []; await assert.rejects(f.service().create(f.input), e => e.code === 'PACKAGE_STATUS_SCHEMA_ERROR'); assert.equal(f.events.length, 0);
@@ -129,7 +129,7 @@ test('B044 detail text preserves domain snapshot and sorted sequence', async () 
   assert.match(detail, /PL NUMBER: B044-PL-20260905-0001/);
   assert.match(detail, /CREATED: 2026\/09\/05 16:21/);
   assert.match(detail, /STATUS: CREATED/);
-  assert.match(detail, /\[001\]\nSKU: A\nLOCATION: A-2\nPUT AWAY SKU: B044-ABC\nWAREHOUSE ORDER: RMAB044-1/);
+  assert.match(detail, /\[001\]\nPACKAGE ID: rec-A\nSKU: A\nLOCATION: A-2\nPUT AWAY SKU: B044-ABC\nWAREHOUSE ORDER: RMAB044-1/);
 });
 
 test('missing Picking List table configuration blocks generic persistence', async () => {
@@ -174,20 +174,12 @@ test('full cancellation rechecks all packages, preserves master/history and only
   await assert.rejects(f.service().complete({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId }), e => e.code === 'PL_NOT_OPERATIONAL');
 });
 
-test('mixed cancellation retains completed work and rolls back only unfinished PL members', async () => {
-  const f = fixture(['A', 'B', 'C', 'D', 'E', 'F'].map(sku => packageRecord(sku)));
-  const pl = await f.service().create(f.input);
-  for (const sku of ['A', 'B']) await f.service().complete({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, packageRecordId: `rec-${sku}`, trackingNumber: sku, confirmationTracking: sku });
-  for (const status of ['Active', 'Processing']) { const record = packageRecord(`UNRELATED-${status}`, status); f.data.set(record.record_id, record); }
+test('any completed package blocks cancellation without rollback or master writes', async () => {
+  const f = fixture(['A','B'].map(sku => packageRecord(sku))); const pl = await f.service().create(f.input);
+  await f.service().complete({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, packageRecordId:'rec-A',trackingNumber:'A',confirmationTracking:'A' });
   const before = structuredClone(f.data);
-  const input = { requestId: f.input.requestId, pickingListNumber: pl.pickingListNumber };
-  const result = await f.service().cancel(input);
-  assert.equal(result.phase, 'cancelled'); assert.equal(result.processedRetained, 2); assert.equal(result.processingReturnedToActive, 4); assert.equal(result.skipped, 0);
-  for (const sku of ['A', 'B', 'UNRELATED-Active', 'UNRELATED-Processing']) assert.deepEqual(f.data.get(`rec-${sku}`), before.get(`rec-${sku}`));
-  for (const sku of ['C', 'D', 'E', 'F']) { assert.equal(f.data.get(`rec-${sku}`).fields.STATUS, 'Active'); assert.match(f.data.get(`rec-${sku}`).fields.NOTE, / - CANCELLED$/); }
-  assert.match(f.data.get('pl-master').fields['PICKING LIST DETAIL'], /Processed packages retained: 2/);
-  const after = structuredClone(f.data);
-  assert.deepEqual(await f.service().cancel(input), result); assert.deepEqual(f.data, after);
+  await assert.rejects(f.service().cancel({ requestId:f.input.requestId,pickingListNumber:pl.pickingListNumber }), e => e.code === 'CANCEL_PROCESSED_BLOCKED');
+  assert.deepEqual(f.data,before); assert.equal(f.data.get('rec-B').fields.STATUS,'Processing');
 });
 
 test('unexpected assigned statuses are preserved and reported as skipped', async () => {
@@ -305,7 +297,7 @@ test('correct target options do not bypass single-select field type protection',
   assert.equal(f.events.length, 0);
 });
 
-test('shared Final SKU cannot confirm either package; only exact normalized pending tracking completes and survives cancellation', async () => {
+test('shared Final SKU cannot confirm packages; exact pending In-House tracking is required', async () => {
   const f = fixture([packageRecord('TRACK-A'), packageRecord('TRACK-B')]); const pl = await f.service().create(f.input);
   assert.equal(pl.packages[0].finalSku, pl.packages[1].finalSku);
   const input = { pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, packageRecordId: 'rec-TRACK-A', trackingNumber: 'TRACK-A' };
@@ -323,18 +315,15 @@ test('shared Final SKU cannot confirm either package; only exact normalized pend
   assert.match(note, / - DONE PUTTING AWAY$/);
   await f.service().complete({ ...input, confirmationTracking: 'TRACK-A' });
   assert.equal(f.data.get('rec-TRACK-A').fields.NOTE, note);
-  const cancelled = await f.service().cancel({ requestId: f.input.requestId, pickingListNumber: pl.pickingListNumber });
-  assert.equal(cancelled.processedRetained, 1); assert.equal(cancelled.processingReturnedToActive, 1);
+  await assert.rejects(f.service().cancel({ requestId: f.input.requestId, pickingListNumber: pl.pickingListNumber }), e => e.code === 'CANCEL_PROCESSED_BLOCKED');
   assert.equal(f.data.get('rec-TRACK-A').fields.NOTE, note);
 });
 
-test('all-completed cancellation retains every package and only updates master lifecycle', async () => {
+test('all-completed cancellation is blocked without writes', async () => {
   const f = fixture(); const pl = await f.service().create(f.input);
   await f.service().complete({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, packageRecordId: 'rec-A', trackingNumber: 'A', confirmationTracking: 'A' });
   const before = structuredClone(f.data.get('rec-A')); f.events.length = 0;
-  const result = await f.service().cancel({ requestId: f.input.requestId, pickingListNumber: pl.pickingListNumber });
-  assert.equal(result.phase, 'cancelled'); assert.equal(result.processedRetained, 1);
-  assert.equal(result.processingReturnedToActive, 0); assert.equal(result.skipped, 0);
+  await assert.rejects(f.service().cancel({ requestId: f.input.requestId, pickingListNumber: pl.pickingListNumber }), e => e.code === 'CANCEL_PROCESSED_BLOCKED');
   assert.deepEqual(f.data.get('rec-A'), before);
   assert.equal(f.events.filter(e => e.fields && e.recordId.startsWith('rec-')).length, 0);
 });
@@ -404,6 +393,180 @@ for(const simplified of [false,true])test(`command snapshot survives PL creation
  const detail=f.data.get('pl-master').fields['PICKING LIST DETAIL'];const snapshot=JSON.parse(detail.split('COMMAND SNAPSHOT: ')[1].split('\n')[0]);assert.equal(snapshot.commandRaw,commandRaw);assert.equal(snapshot.commandDisplay,row.commandDisplay);
  assert.equal((await f.service().create(f.input)).packages[0].commandRaw,commandRaw);
  await assert.rejects(f.service().complete({pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:row.packageRecordId,trackingNumber:row.trackingNumber,confirmationTracking:'WRAP'+row.trackingNumber}),e=>e.code==='WRONG_PACKAGE_CONFIRMATION');
- assert.equal((await f.service().complete({pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:row.packageRecordId,trackingNumber:row.trackingNumber,confirmationTracking:row.trackingNumber})).pickingListComplete,true);
+ assert.equal((await f.service().complete({pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:row.packageRecordId,trackingNumber:row.trackingNumber,confirmationTracking:row.trackingNumber,partsReady:true,parts:[]})).pickingListComplete,true);
  assert.ok(f.events.filter(e=>e.fields&&e.recordId===row.packageRecordId).every(e=>Object.keys(e.fields).every(k=>['STATUS','NOTE'].includes(k))));
+});
+
+function commandCompletionFixture() {
+  const f = fixture(); f.input.rows[0].commandRaw = '补说明书 CARTON-330-226-328 M8LS*14 FD-B044-260908-0001';
+  return f;
+}
+const completionInput = pl => ({ pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:'rec-A',trackingNumber:'A',confirmationTracking:'A',partsReady:true,parts:[{sku:'M8LS*14',quantity:2}] });
+
+test('possible parts never persist; actual usage writes only after Processed and exactly once', async () => {
+  const f = commandCompletionFixture(), pl = await f.service().create(f.input), input = completionInput(pl);
+  assert.equal(f.data.get('pl-master').fields['PART USED'],undefined);
+  await assert.rejects(f.service().complete({...input,partsReady:false}), e => e.code==='PARTS_NOT_READY');
+  await assert.rejects(f.service().complete({...input,confirmationTracking:'WRAP-A'}), e => e.code==='WRONG_PACKAGE_CONFIRMATION');
+  assert.equal(f.data.get('rec-A').fields.STATUS,'Processing');assert.equal(f.data.get('pl-master').fields['PART USED'],undefined);
+  const update = f.records.updateRecord;
+  f.records.updateRecord = async args => { if(args.fields['PART USED'])assert.equal(f.data.get('rec-A').fields.STATUS,'Processed');return update(args); };
+  await f.service().complete(input);
+  const saved = JSON.parse(f.data.get('pl-master').fields['PART USED']);
+  assert.equal(saved.version,1);assert.equal(saved.packages[0].packageRecordId,'rec-A');assert.deepEqual(saved.packages[0].parts,input.parts);assert.equal(saved.packages[0].status,'CONFIRMED');
+  assert.doesNotMatch(f.data.get('pl-master').fields['PART USED'],/CARTON|说明书|FD-B044/);
+  const before = structuredClone(f.data), writes = f.events.filter(e=>e.fields).length;
+  await f.service().complete({...input,parts:[{sku:'FORGED',quantity:50}]});
+  assert.deepEqual(f.data,before);assert.equal(f.events.filter(e=>e.fields).length,writes);
+});
+for (const point of ['package-lost','master-before','master-lost','checkpoint']) test(`completion recovers ${point} with immutable intent and no duplicate usage/NOTE`, async () => {
+  const f=commandCompletionFixture(),pl=await f.service().create(f.input),input=completionInput(pl);
+  const update=f.records.updateRecord,put=f.storage.put;let once=true;
+  f.records.updateRecord=async args=>{
+    if(once&&point==='master-before'&&args.fields['PART USED']){once=false;throw Error('failed');}
+    const result=await update(args);
+    if(once&&((point==='package-lost'&&args.fields.STATUS==='Processed')||(point==='master-lost'&&args.fields['PART USED']))){once=false;throw Error('lost');}
+    return result;
+  };
+  f.storage.put=async(k,v)=>{if(once&&point==='checkpoint'&&v.rows?.[0]?.completedAt){once=false;throw Error('checkpoint');}return put(k,v);};
+  await assert.rejects(f.service().complete(input));
+  await assert.rejects(f.service().complete({...input,parts:[{sku:'DIFFERENT',quantity:1}]}),e=>e.code==='COMPLETION_REQUEST_CONFLICT');
+  await assert.rejects(f.service().cancel({requestId:f.input.requestId,pickingListNumber:pl.pickingListNumber}),e=>e.code==='CANCEL_PROCESSED_BLOCKED');
+  assert.equal((await f.service().complete(input)).status,'Processed');
+  const saved=JSON.parse(f.data.get('pl-master').fields['PART USED']);assert.equal(saved.packages.length,1);assert.deepEqual(saved.packages[0].parts,input.parts);
+  assert.equal(f.data.get('rec-A').fields.NOTE.match(/DONE PUTTING AWAY/g).length,1);
+  assert.equal(f.data.get('pl-master').fields['PICKING LIST DETAIL'].match(/COMPLETION:/g).length,1);
+});
+test('missing PART USED Text schema fails before Processed; retry after schema repair succeeds',async()=>{
+  const f=commandCompletionFixture(),pl=await f.service().create(f.input),input=completionInput(pl);
+  const fields=f.records.listFields;f.records.listFields=async()=>statusFields(['Processed']);
+  await assert.rejects(f.service().complete(input),e=>e.code==='PART_USED_SCHEMA_ERROR');
+  assert.equal(f.data.get('rec-A').fields.STATUS,'Processing');assert.equal(f.data.get('pl-master').fields['PART USED'],undefined);
+  f.records.listFields=fields;await f.service().complete(input);
+});
+test('malformed existing PART USED blocks safely before package transition',async()=>{
+  const f=commandCompletionFixture(),pl=await f.service().create(f.input);
+  f.data.get('pl-master').fields['PART USED']='unrecognized history';
+  await assert.rejects(f.service().complete(completionInput(pl)),e=>e.code==='PART_USED_FORMAT_ERROR');assert.equal(f.data.get('rec-A').fields.STATUS,'Processing');
+});
+test('command list can cancel before final scan without any PART USED writes',async()=>{
+  const f=commandCompletionFixture(),pl=await f.service().create(f.input);
+  await f.service().cancel({requestId:f.input.requestId,pickingListNumber:pl.pickingListNumber});
+  assert.equal(f.data.get('rec-A').fields.STATUS,'Active');assert.equal(f.data.get('pl-master').fields['PART USED'],undefined);
+});
+test('multiple commanded packages merge actual usage without overwriting earlier confirmation',async()=>{
+ const f=fixture([packageRecord('A'),packageRecord('B')]);f.input.rows.forEach(r=>r.commandRaw='说明书');const pl=await f.service().create(f.input);
+ for(const tracking of ['A','B'])await f.service().complete({...completionInput(pl),trackingNumber:tracking,confirmationTracking:tracking,packageRecordId:`rec-${tracking}`});
+ const usage=globalThis.MkitePickingParts.parse(f.data.get('pl-master').fields['PART USED']);assert.equal(usage.packages.length,2);assert.deepEqual(globalThis.MkitePickingParts.aggregate(usage.packages.map(p=>p.parts)),[{sku:'M8LS*14',quantity:4}]);
+});
+test('a failed package write still in Processing may cancel; pending intent cannot later confirm usage',async()=>{
+ const f=commandCompletionFixture(),pl=await f.service().create(f.input),update=f.records.updateRecord;
+ f.records.updateRecord=async args=>{if(args.fields.STATUS==='Processed')throw Error('not written');return update(args);};
+ await assert.rejects(f.service().complete(completionInput(pl)));assert.equal(f.data.get('rec-A').fields.STATUS,'Processing');
+ await f.service().cancel({requestId:f.input.requestId,pickingListNumber:pl.pickingListNumber});assert.equal(f.data.get('pl-master').fields['PART USED'],undefined);assert.equal(f.memory.get(`job:${f.input.requestId}`).rows[0].completionIntent,undefined);
+ await assert.rejects(f.service().complete(completionInput(pl)),e=>e.code==='PL_NOT_OPERATIONAL');
+});
+test('invalid actual parts reject before any transition',async()=>{
+ for(const parts of [[{sku:'P',quantity:0}],[{sku:'P',quantity:1.5}],[{sku:'P',quantity:1},{sku:'P',quantity:1}],[{sku:'',quantity:1}]]){
+  const f=commandCompletionFixture(),pl=await f.service().create(f.input);await assert.rejects(f.service().complete({...completionInput(pl),parts}),e=>e.code==='INVALID_PARTS');assert.equal(f.data.get('rec-A').fields.STATUS,'Processing');
+ }
+});
+
+test('TEST001 command confirmation uses stored tracking, rejects Final SKU, and persists parts once',async()=>{
+ const f=fixture([packageRecord('TEST001')]);f.input.rows[0].inboundSku='A-L24V100-100-BASIC-BT-8-A160-CA';f.input.rows[0].commandRaw='补说明书';
+ const pl=await f.service().create(f.input),row=pl.packages[0],input={...completionInput(pl),packageRecordId:row.packageRecordId,trackingNumber:row.trackingNumber};
+ assert.equal(row.finalSku,'B044-A-L24V100-100-BASIC-BT-8-A160-CA');
+ for(const confirmationTracking of [row.finalSku,'WRONG','WRAP-TEST001','TEST','']){
+  await assert.rejects(f.service().complete({...input,confirmationTracking,expectedFinalSku:confirmationTracking,finalSku:confirmationTracking}),e=>e.code==='WRONG_PACKAGE_CONFIRMATION');
+  assert.equal(f.data.get(row.packageRecordId).fields.STATUS,'Processing');assert.equal(f.data.get('pl-master').fields['PART USED'],undefined);
+ }
+ await assert.rejects(f.service().complete({...input,confirmationTracking:undefined,confirmationSku:'TEST001'}),e=>e.code==='WRONG_PACKAGE_CONFIRMATION');
+ assert.equal((await f.service().complete({...input,confirmationTracking:' test001 '})).status,'Processed');
+ await f.service().complete({...input,confirmationTracking:'TEST001'});
+ const usage=JSON.parse(f.data.get('pl-master').fields['PART USED']);assert.equal(usage.packages.length,1);assert.equal(usage.packages[0].parts[0].quantity,2);
+});
+
+test('PART USED acknowledgement requires exact master write and verified versioned JSON',async()=>{
+ const f=commandCompletionFixture(),pl=await f.service().create(f.input),input=completionInput(pl),update=f.records.updateRecord;
+ let attempted=false;
+ f.records.updateRecord=async args=>{if(Object.hasOwn(args.fields,'PART USED')){attempted=true;assert.equal(args.recordId,pl.pickingListRecordId);assert.equal(JSON.parse(args.fields['PART USED']).version,1);return {}; }return update(args);};
+ await assert.rejects(f.service().complete(input),e=>e.code==='PL_PERSISTENCE_UNCONFIRMED');
+ assert.equal(attempted,true);assert.equal(f.data.get('rec-A').fields.STATUS,'Processed');assert.equal(f.memory.get(`job:${f.input.requestId}`).rows[0].completedAt,undefined);
+ f.records.updateRecord=update;assert.equal((await f.service().complete(input)).partsPersisted,true);
+ assert.equal(JSON.parse(f.data.get('pl-master').fields['PART USED']).packages.length,1);
+ // A cached completion must reread/reconcile missing usage, not claim it was saved.
+ f.data.get('pl-master').fields['PART USED']='';
+ assert.equal((await f.service().complete(input)).partsPersisted,true);
+ assert.equal(JSON.parse(f.data.get('pl-master').fields['PART USED']).packages.length,1);
+});
+
+test('TEST005 second tracking scan confirms arbitrary actual parts and retries once',async()=>{
+ const f=commandCompletionFixture();f.input.rows[0].trackingNumber='TEST005';f.data.get('rec-A').fields.SKU='TEST005';
+ const pl=await f.service().create(f.input),input={...completionInput(pl),trackingNumber:'TEST005',confirmationTracking:'TEST005',parts:[{sku:'PART-A',quantity:1},{sku:'PART-B',quantity:2}]};
+ await assert.rejects(f.service().complete({...input,confirmationTracking:pl.packages[0].finalSku}),e=>e.code==='WRONG_PACKAGE_CONFIRMATION');
+ const result=await f.service().complete(input);assert.equal(result.partsPersisted,true);assert.equal(f.data.get('rec-A').fields.STATUS,'Processed');
+ await f.service().complete(input);const usage=JSON.parse(f.data.get('pl-master').fields['PART USED']);assert.equal(usage.packages.length,1);assert.equal(usage.packages[0].trackingNumber,'TEST005');assert.equal(usage.packages[0].status,'CONFIRMED');assert.deepEqual(usage.packages[0].parts,input.parts);
+});
+
+test('read-only reconciliation reports Processed with unconfirmed parts then verified retry',async()=>{
+ const f=commandCompletionFixture(),pl=await f.service().create(f.input),input=completionInput(pl),update=f.records.updateRecord;
+ f.records.updateRecord=async args=>{if(args.fields['PART USED'])throw Error('save unavailable');return update(args);};
+ await assert.rejects(f.service().complete(input));const before=structuredClone(f.events);
+ const pending=await f.service().reconcile(input);assert.equal(pending.packages[0].packageStatus,'Processed');assert.equal(pending.packages[0].partsPersisted,false);assert.equal(pending.packages[0].completedAt,null);assert.equal(pending.packages[0].reconciliationRequired,true);assert.deepEqual(f.events,before);
+ await assert.rejects(f.service().cancel({pickingListNumber:pl.pickingListNumber,requestId:f.input.requestId}),e=>e.code==='CANCEL_PROCESSED_BLOCKED');
+ f.records.updateRecord=update;await f.service().complete(input);await f.service().complete(input);
+ const resolved=await f.service().reconcile(input);assert.equal(resolved.packages[0].partsPersisted,true);assert.equal(resolved.packages[0].reconciliationRequired,false);assert.ok(resolved.packages[0].completedAt);assert.equal(JSON.parse(f.data.get('pl-master').fields['PART USED']).packages.length,1);
+});
+
+test('reconciliation uses persisted identity without requestId or durable job and never writes',async()=>{
+ const f=fixture([packageRecord('A'),packageRecord('B')]);f.input.rows=[source('A'),source('B')];f.input.rows[0].commandRaw='补说明书';
+ const pl=await f.service().create(f.input);f.data.get('rec-A').fields.STATUS='Processed';
+ const identity={pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId};
+ for(const legacy of [false,true]){
+  if(legacy)f.memory.clear();
+  const before=structuredClone(f.data),memory=structuredClone(f.memory);
+  for(const input of [identity,{pickingListNumber:pl.pickingListNumber}]){
+   const result=await f.service().reconcile(input);assert.equal(result.completedCount,1);assert.equal(result.remainingCount,1);assert.equal(result.totalCount,2);assert.equal(result.packages[0].partsPersisted,false);assert.equal(result.packages[0].reconciliationRequired,true);
+  }
+  assert.deepEqual(f.data,before);assert.deepEqual(f.memory,memory);
+ }
+ await assert.rejects(f.service().reconcile({...identity,pickingListNumber:'WRONG'}),e=>e.code==='PL_MASTER_CHANGED');
+ f.data.set('pl-duplicate',{record_id:'pl-duplicate',fields:structuredClone(f.data.get('pl-master').fields)});
+ await assert.rejects(f.service().reconcile({pickingListNumber:pl.pickingListNumber}),e=>e.code==='PL_IDENTITY_UNRESOLVED');
+});
+
+test('admin broken legacy recovery audits only assigned packages and enables normal cancellation',async()=>{
+ const f=commandCompletionFixture(),pl=await f.service().create(f.input),identity={pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId};
+ await assert.rejects(f.service().adminRecover(identity),e=>e.code==='ADMIN_RECOVERY_BLOCKED');
+ const update=f.records.updateRecord;f.records.updateRecord=async args=>{if(args.fields['PART USED'])throw Error('lost parts save');return update(args);};
+ await assert.rejects(f.service().complete(completionInput(pl)));f.records.updateRecord=update;
+ const job=f.memory.get(`job:${f.input.requestId}`);delete job.rows[0].completionIntent;
+ f.data.set('rec-unrelated',packageRecord('unrelated','Processed'));const unrelated=structuredClone(f.data.get('rec-unrelated'));
+ const before=structuredClone(f.data);assert.equal((await f.service().adminRecover(identity)).eligible,true);assert.deepEqual(f.data,before);
+ const recovered=await f.service().adminRecover({...identity,confirm:true,confirmPickingListNumber:pl.pickingListNumber});assert.equal(recovered.rows[0].packageStatus,'Processing');assert.equal(recovered.rows[0].completionIntent,undefined);assert.equal(f.data.get('pl-master').fields['PART USED'],undefined);assert.match(f.data.get('rec-A').fields.NOTE,/ADMIN RECOVERY:/);assert.match(f.data.get('rec-A').fields.NOTE,/old history/);assert.match(f.data.get('pl-master').fields['PICKING LIST DETAIL'],/ADMIN RECOVERY:/);assert.deepEqual(f.data.get('rec-unrelated'),unrelated);
+ await f.service().adminRecover({...identity,confirm:true,confirmPickingListNumber:pl.pickingListNumber});assert.equal(f.data.get('rec-A').fields.NOTE.match(/ADMIN RECOVERY:/g).length,1);
+ assert.equal((await f.service().cancel({pickingListNumber:pl.pickingListNumber,requestId:f.input.requestId})).phase,'cancelled');
+});
+test('admin recovery refuses valid usage and ambiguous package ownership without writes',async()=>{
+ const f=commandCompletionFixture(),pl=await f.service().create(f.input),identity={pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,confirm:true,confirmPickingListNumber:pl.pickingListNumber};
+ await f.service().complete(completionInput(pl));const before=structuredClone(f.data);await assert.rejects(f.service().adminRecover(identity));assert.deepEqual(f.data,before);
+ f.data.get('pl-master').fields['PART USED']='';delete f.memory.get(`job:${f.input.requestId}`).rows[0].completedAt;f.data.get('rec-A').fields.NOTE+='\n - B044 SCAN PUT AWAY TOOL: PL NUMBER: OTHER - CREATED';const conflict=structuredClone(f.data);await assert.rejects(f.service().adminRecover(identity));assert.deepEqual(f.data,conflict);
+});
+
+test('admin recovery lost acknowledgement resumes immutable plan without duplicate audit',async()=>{
+ const f=commandCompletionFixture(),pl=await f.service().create(f.input),identity={pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,confirm:true,confirmPickingListNumber:pl.pickingListNumber};
+ const update=f.records.updateRecord;f.records.updateRecord=async args=>{if(args.fields['PART USED'])throw Error('failed');return update(args);};await assert.rejects(f.service().complete(completionInput(pl)));
+ let once=true;f.records.updateRecord=async args=>{const result=await update(args);if(once&&args.fields.STATUS==='Processing'){once=false;throw Error('lost');}return result;};
+ await assert.rejects(f.service().adminRecover(identity));assert.equal((await f.service().create(f.input)).operational,false);
+ await f.service().adminRecover(identity);assert.equal(f.data.get('rec-A').fields.STATUS,'Processing');assert.equal(f.data.get('rec-A').fields.NOTE.match(/ADMIN RECOVERY:/g).length,1);assert.equal(f.data.get('pl-master').fields['PICKING LIST DETAIL'].match(/ADMIN RECOVERY:/g).length,1);
+});
+
+test('cancellation uses current TEST006/TEST009 status despite historical completion and parts intent',async()=>{
+ const f=fixture([packageRecord('TEST006'),packageRecord('TEST009')]);f.input.rows=[source('TEST006'),source('TEST009')];f.input.rows[0].commandRaw='补说明书';
+ const pl=await f.service().create(f.input),job=f.memory.get(`job:${f.input.requestId}`);
+ for(const row of job.rows){row.completedAt='2026-09-10T12:00:00Z';row.packageStatus='Processed';row.completionIntent={confirmedAt:row.completedAt,parts:[]};const r=f.data.get(row.packageRecordId);r.fields.NOTE+='\nold - B044 SCAN PUT AWAY TOOL: PL NUMBER: '+pl.pickingListNumber+' - DONE PUTTING AWAY';}
+ const result=await f.service().reconcile({pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId});assert.equal(result.assignedCount,2);assert.equal(result.completedCount,0);assert.equal(result.processingCount,2);assert.equal(result.remainingCount,2);assert.equal(result.cancellationAllowed,true);assert.ok(result.packages.every(r=>r.currentStatus==='Processing'&&r.historicalCompletionExists&&!r.completedAt));
+ const cancelled=await f.service().cancel({requestId:f.input.requestId,pickingListNumber:pl.pickingListNumber});assert.equal(cancelled.phase,'cancelled');
+ for(const id of ['rec-TEST006','rec-TEST009']){assert.equal(f.data.get(id).fields.STATUS,'Active');assert.match(f.data.get(id).fields.NOTE,/DONE PUTTING AWAY/);}
+ assert.equal(f.memory.get(`job:${f.input.requestId}`).rows[0].completedAt,'2026-09-10T12:00:00Z');
 });

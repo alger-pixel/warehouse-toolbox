@@ -155,3 +155,17 @@ for (const [type, failure, expectedCode, expectedStatus] of [
   assert.equal((await (await f.send()).json()).data.operational, true);
   assert.equal(f.masters.length, 1);
 });
+
+test('public reconcile endpoint dispatches read-only lookup without creation requestId',async t=>{
+ const f=fixture(t),pl=(await (await f.send()).json()).data;
+ f.packages[0].fields.STATUS='Processed';const before=structuredClone(f.memory);f.events.length=0;
+ const response=await f.send({pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId},'reconcile'),body=await response.json();
+ assert.equal(response.status,200);assert.equal(body.data.completedCount,1);assert.equal(body.data.remainingCount,5);assert.equal(f.events.includes('update'),false);assert.deepEqual(f.memory,before);
+});
+
+test('admin recovery denies absent/wrong key at public and coordinator boundaries',async t=>{
+ const f=fixture(t);
+ const missing=await f.send({},'admin-recover');assert.equal(missing.status,401);assert.equal(f.events.length,0);
+ const coordinator=new B044PutAwayCoordinator({storage:f.storage},{USER_MANAGEMENT_ADMIN_KEY:'a'.repeat(32)});
+ for(const key of ['', 'wrong']){const response=await coordinator.fetch(new Request('https://b044.internal/admin-recover',{method:'POST',headers:{Authorization:'Bearer '+key},body:'{}'}));assert.equal(response.status,401);}
+});

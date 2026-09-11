@@ -1,3 +1,6 @@
+import { recoverBrokenPickingList } from './admin-recovery-service.js';
+import { parsePickingList } from '../batch-picking-lists/search-service.js';
+import '../../../../js/shared/picking-parts.js';
 import { cleanText, normalizeSku } from '../../utils/validation.js';
 import { RECEIVING_FIELDS as F } from '../receiving/receiving-fields.js';
 import { createPackageActivityService, PACKAGE_ACTION_TYPES as A } from '../../services/package-activity-service.js';
@@ -107,7 +110,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     const rows = normalizeRows(input.rows), fingerprint = JSON.stringify(rows);
     if (job && job.fingerprint !== fingerprint) fail('REQUEST_ID_CONFLICT', 'This creation request belongs to different source data.');
     if (job?.phase === 'blocked' || job?.phase === 'persisting') { options.onStage?.('RESUME_REQUIRES_INSPECTION'); return publicJob({ ...job, message: job.message || 'Creation outcome is uncertain. Scan is blocked; inspect Feishu and the creation request before proceeding.' }); }
-    if (['operational', 'cancelling', 'cancelled'].includes(job?.phase)) { options.onStage?.('RETURN_EXISTING'); return publicJob(job); }
+    if (['operational', 'cancelling', 'cancelled', 'admin-recovering'].includes(job?.phase)) { options.onStage?.('RETURN_EXISTING'); return publicJob(job); }
     await validateStatusWrite('Processing');
     if (!job) {
       options.onStage?.('RECHECK_ELIGIBILITY');
@@ -152,17 +155,96 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     options.onStage?.('CHECKPOINT_ASSIGNMENT', { operationState: job.phase });
     await storage.put(key, job); return publicJob(job);
   }
+  async function reconcile(input) {
+    validateInput(input);
+    const number = cleanText(input.pickingListNumber), recordId = cleanText(input.pickingListRecordId);
+    if (!number || number.length > 256 || (recordId && !/^[a-zA-Z0-9_-]{1,100}$/.test(recordId))) fail('INVALID_PL_IDENTITY', 'Provide the persisted Picking List number and optional record ID.');
+    const listArgs = { appToken: config.appToken, tableId: config.pickingListTableId };
+    if (!listArgs.tableId) fail('PICKING_LIST_NOT_CONFIGURED', 'Picking List table is not configured.');
+    const cellText = value => Array.isArray(value) ? value.map(v => v.text || '').join('') : String(value ?? '');
+    let master;
+    if (recordId) master = await records.getRecord({ ...listArgs, recordId });
+    else {
+      const matches = (await records.listRecords(listArgs)).filter(r => cellText(r.fields?.['PICKING LIST NUMBER']) === number);
+      if (matches.length !== 1) fail('PL_IDENTITY_UNRESOLVED', 'Picking List number must identify exactly one record.');
+      master = matches[0];
+    }
+    if (!master?.record_id || (recordId && master.record_id !== recordId) || cellText(master.fields?.['PICKING LIST NUMBER']) !== number) fail('PL_MASTER_CHANGED', 'Picking List record ID and number do not match.');
+    const snapshot = parsePickingList(master);
+    const key = await storage.get(`pl:${number}`), storedJob = key && await storage.get(key);
+    const job = storedJob?.pickingListRecordId === master.record_id ? storedJob : { pickingListNumber: number, pickingListRecordId: master.record_id, rows: snapshot.packages.map(r => ({ ...r, normalizedTracking: normalizeSku(r.trackingNumber) })) };
+    if (!job.rows.length || job.rows.length !== snapshot.total) fail('PL_IDENTITY_UNRESOLVED', 'Assigned package detail could not be verified.');
+    let inventory;
+    for (const row of job.rows) if (!row.packageRecordId) {
+      inventory ||= await records.listRecords(args);
+      const matches = inventory.filter(r => normalizeSku(r.fields?.[F.sku]) === row.normalizedTracking && (hasAction(r.fields?.[F.note], number, false) || hasAction(r.fields?.[F.note], number, true)));
+      if (matches.length !== 1) fail('PACKAGE_STATE_CONFLICT', 'Legacy package identity is missing or ambiguous.');
+      row.packageRecordId = matches[0].record_id;
+    }
+    const packages = [];
+    for (const row of job.rows) {
+      const record = await records.getRecord({ ...args, recordId: row.packageRecordId });
+      if (record.record_id !== row.packageRecordId || normalizeSku(record.fields?.[F.sku]) !== row.normalizedTracking) fail('PACKAGE_STATE_CONFLICT', 'Package identity changed.');
+      const packageStatus = record.fields[F.status];
+      let partsPersisted = !row.commandRaw, completionVerified = false;
+      if (packageStatus === 'Processed' && row.completionIntent) {
+        try {
+          const fields = await pickingLists.completionFields(job, row, row.completionIntent);
+          completionVerified = await pickingLists.completionMatches(job, fields);
+        } catch { completionVerified = false; } // Status is authoritative even when usage cannot be verified.
+        partsPersisted = row.commandRaw ? completionVerified : true;
+      }
+      if (packageStatus === 'Processed' && !row.completionIntent) {
+        const saved = snapshot.packages.find(p => p.packageRecordId === row.packageRecordId && p.trackingNumber === row.trackingNumber);
+        if (saved?.completedAt) {
+          if (!row.commandRaw) completionVerified = true;
+          else try {
+            const usage = globalThis.MkitePickingParts.parse(cellText(master.fields['PART USED']));
+            partsPersisted = completionVerified = usage.packages.some(p => p.packageRecordId === row.packageRecordId && p.trackingNumber === row.trackingNumber && p.confirmedAt === saved.completedAt);
+          } catch { partsPersisted = false; }
+        }
+      }
+      packages.push({ packageRecordId: row.packageRecordId, packageStatus, currentStatus: packageStatus, historicalCompletionExists: Boolean(row.completedAt || row.completionIntent || snapshot.packages.find(p => p.packageRecordId === row.packageRecordId)?.completedAt), partsPersisted,
+        reconciliationRequired: packageStatus === 'Processed' && !completionVerified,
+        completedAt: completionVerified ? (row.completionIntent?.confirmedAt || snapshot.packages.find(p => p.packageRecordId === row.packageRecordId)?.completedAt) : null,
+        completionIntent: row.completionIntent || null });
+    }
+    const completedCount = packages.filter(row => row.packageStatus === 'Processed').length;
+    return { pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId, totalCount: packages.length, assignedCount: packages.length, processedCount: completedCount, processingCount: packages.filter(r => r.packageStatus === 'Processing').length, cancellationAllowed: completedCount === 0 && ['operational','cancelling'].includes(job.phase || 'operational'), completedCount, remainingCount: packages.length - completedCount, packages };
+  }
   async function complete(input) {
     validateInput(input);
     const key = await storage.get(`pl:${cleanText(input.pickingListNumber)}`); const job = key && await storage.get(key);
     if (!job || job.phase !== 'operational' || input.pickingListRecordId !== job.pickingListRecordId) fail('PL_NOT_OPERATIONAL', 'Picking List is not operational.');
     const row = job.rows.find(r => r.packageRecordId === input.packageRecordId && r.normalizedTracking === normalizeSku(input.trackingNumber));
     if (!row) fail('PACKAGE_NOT_IN_PL', 'PACKAGE NOT IN THIS PICKING LIST');
-    if (!cleanText(input.confirmationTracking) || normalizeSku(input.confirmationTracking) !== row.normalizedTracking) fail('WRONG_PACKAGE_CONFIRMATION', 'Scan the exact tracking number of the pending package to confirm printing.');
-    await validateStatusWrite('Processed'); await transition(row, job.pickingListNumber, true);
-    row.completedAt = row.completedAt || new Date(now()).toISOString();
-    await storage.put(key, job);
-    return { packageRecordId: row.packageRecordId, status: 'Processed', completedAt: row.completedAt, completed: job.rows.filter(r => r.completedAt).length, total: job.rows.length, pickingListComplete: job.rows.every(r => r.completedAt) };
+    if (!cleanText(input.confirmationTracking) || !row.normalizedTracking || normalizeSku(input.confirmationTracking) !== row.normalizedTracking) fail('WRONG_PACKAGE_CONFIRMATION', 'Scan the exact In-House SKU / Tracking of the pending package to confirm completion.');
+    if (!row.completedAt) {
+      let parts = [];
+      if (row.commandRaw) {
+        if (input.partsReady !== true) fail('PARTS_NOT_READY', 'Confirm the temporary actual parts list before the final tracking scan.');
+        try { parts = globalThis.MkitePickingParts.validate(input.parts); }
+        catch (error) { fail('INVALID_PARTS', error.message); }
+      } else if (input.parts?.length) fail('INVALID_PARTS', 'Normal packages cannot submit parts usage.');
+      const requestId = `${job.requestId}:${row.packageRecordId}`;
+      if (row.completionIntent && JSON.stringify(row.completionIntent.parts) !== JSON.stringify(parts)) fail('COMPLETION_REQUEST_CONFLICT', 'Completion is pending with the original parts. Retry that same request.');
+      const intent = row.completionIntent || { requestId, parts, confirmedAt: new Date(now()).toISOString() };
+      await validateStatusWrite('Processed');
+      // Validate schema / merge / size before any package write. Intent is not confirmed usage.
+      const fields = await pickingLists.completionFields(job, row, intent);
+      row.completionIntent = intent; await storage.put(key, job);
+      await transition(row, job.pickingListNumber, true);
+      await pickingLists.persistCompletion(job, fields);
+      row.completedAt = intent.confirmedAt; row.actualParts = intent.parts;
+      await storage.put(key, job);
+    }
+    else if (row.commandRaw) {
+      // A cached completion alone is not proof that PART USED is still present.
+      if (!row.completionIntent) fail('PART_USED_RECONCILIATION_REQUIRED', 'Saved completion has no original parts intent. Inspect this Picking List before recovery.');
+      const fields = await pickingLists.completionFields(job, row, row.completionIntent);
+      await pickingLists.persistCompletion(job, fields);
+    }
+    return { partsPersisted: Boolean(row.commandRaw), packageRecordId: row.packageRecordId, status: 'Processed', completedAt: row.completedAt, completed: job.rows.filter(r => r.completedAt).length, total: job.rows.length, pickingListComplete: job.rows.every(r => r.completedAt) };
   }
   async function cancel(input) {
     validateInput(input);
@@ -184,12 +266,12 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       const rolledBack = job.phase === 'cancelling' && fields[F.status] === 'Active' && lastAction.endsWith(suffix + 'CANCELLED');
       if (rolledBack) return 'processingReturnedToActive';
       if (!['Processing', 'Processed'].includes(fields[F.status])) return 'skipped';
-      if (!lastAction.endsWith(suffix + 'CREATED') && !(fields[F.status] === 'Processed' && lastAction.endsWith(suffix + 'DONE PUTTING AWAY'))) fail('PACKAGE_STATE_CONFLICT', 'An assigned package Picking List ownership changed. Cancellation is blocked.');
+      if (!lastAction.endsWith(suffix + 'CREATED') && !lastAction.endsWith(suffix + 'DONE PUTTING AWAY')) fail('PACKAGE_STATE_CONFLICT', 'An assigned package Picking List ownership changed. Cancellation is blocked.');
       return fields[F.status] === 'Processed' ? 'processedRetained' : 'rollback';
     }
     for (const row of job.rows) {
       if (await storage.get(`reserved:${row.packageRecordId}`) !== input.requestId) fail('PACKAGE_STATE_CONFLICT', 'Package reservation belongs to another operation.');
-      verify(row, byId.get(row.packageRecordId));
+      if (verify(row, byId.get(row.packageRecordId)) === 'processedRetained') fail('CANCEL_PROCESSED_BLOCKED', 'Cancellation is blocked because a package is Processed. Recover any pending final scan first.');
     }
     job.phase = 'cancelling'; job.cancelledAt ||= new Date(now()).toISOString(); job.cancelledIds ||= []; job.cancelOutcomes ||= {};
     await storage.put(key, job); // Blocks all subsequent completion requests before rollback.
@@ -197,6 +279,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     for (const row of job.rows.filter(row => !job.cancelledIds.includes(row.packageRecordId)).slice(0, 8)) {
       const current = await records.getRecord({ ...args, recordId: row.packageRecordId });
       const outcome = verify(row, current);
+      if (outcome === 'processedRetained') fail('CANCEL_PROCESSED_BLOCKED', 'A package became Processed. Cancellation is blocked.');
       if (outcome === 'rollback') {
         const action = activity.createAction(A.B044_PUTAWAY_CANCELLED, { toolId: 'b044.put-away-scan', clientId: row.clientId, packageRecordId: row.packageRecordId, sku: row.trackingNumber, pickingListNumber: job.pickingListNumber, fromStatus: 'Processing', toStatus: 'Active' }, job.cancelledAt);
         const note = activity.appendActivityNote(current.fields[F.note], activity.formatActivityLine(action));
@@ -211,10 +294,11 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       options.onStage?.('CANCEL_MASTER');
       const summary = publicJob(job);
       await pickingLists.appendLifecycle(job, `STATUS: CANCELLED\nCANCELLED: ${warehouseTimestamp(job.cancelledAt, config.warehouseTimeZone)}\nProcessed packages retained: ${summary.processedRetained}\nProcessing packages returned to Active: ${summary.processingReturnedToActive}\nSkipped/unexpected status packages: ${summary.skipped}`);
+      for (const row of job.rows) if (!row.completedAt) { delete row.completionIntent; delete row.actualParts; }
       job.phase = 'cancelled'; job.error = undefined; job.message = 'PICKING LIST CANCELLED';
       await storage.put(key, job);
     }
     return publicJob(job);
   }
-  return { prepare, create, complete, cancel };
+  return { prepare, create, complete, cancel, reconcile, adminRecover: input => recoverBrokenPickingList(input, config, records, storage, now) };
 }
