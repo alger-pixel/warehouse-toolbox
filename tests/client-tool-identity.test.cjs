@@ -89,7 +89,8 @@ test('directory styles isolate desktop grid, mobile layout and dark surfaces', (
   assert.match(css, /@media \(max-width:900px\)[^\n]*\.client-directory \.client-tool-grid \{ grid-template-columns:1fr/);
   assert.match(css, /@media \(max-width:540px\)[^\n]*client-directory-filters \{ grid-template-columns:1fr/);
   assert.match(css, /\[data-theme="dark"\] \.app-shell:has\(\.client-directory\)/);
-  assert.match(html, /directory-sidebar-logo[^>]*assets\/images\/mkite-logo.png/);
+  assert.match(html, /directory-sidebar-logo[^>]*assets\/images\/MKS LOGO.png/);
+  assert.match(html, /directory-sidebar-logo--light[^>]*assets\/images\/MKS LOGO BLACK.png/);
   assert.match(html, /id="theme-toggle"/);
   assert.match(html, /id="menu-button"/);
   assert.match(html, /Search tools, clients, or keywords/);

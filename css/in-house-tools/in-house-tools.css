@@ -26,9 +26,15 @@
 [data-in-house-theme="batch-picking-list"].in-house-card .in-house-card-icon,
 [data-in-house-theme="batch-picking-list"].in-house-card .in-house-card-arrow { background:#5f86a3; color:#f8fbff; }
 [data-in-house-theme="batch-picking-list"].in-house-card .in-house-card-copy>span:last-child { color:rgba(255,255,255,.82); }
-.in-house-tool-hero { display:flex; min-height:210px; align-items:center; justify-content:space-between; gap:28px; margin-bottom:24px; padding:clamp(30px,4vw,50px); border-radius:28px; background:var(--current-in-house-color); color:var(--current-in-house-text); box-shadow:var(--shadow-sm); }
+.in-house-tool-hero { position:relative; isolation:isolate; display:flex; min-height:210px; align-items:center; justify-content:space-between; gap:28px; margin-bottom:24px; padding:clamp(30px,4vw,50px); overflow:hidden; border:1px solid color-mix(in srgb,var(--current-in-house-color) 58%,rgba(255,255,255,.12)); border-radius:28px; background:#071923; color:#f8fbff; box-shadow:var(--shadow-sm); }
+.in-house-tool-hero::before { position:absolute; z-index:-2; inset:0; background-position:center; background-size:cover; background-repeat:no-repeat; content:""; pointer-events:none; }
+.in-house-tool-hero::after { position:absolute; z-index:-1; inset:0; background:linear-gradient(90deg,color-mix(in srgb,var(--current-in-house-color) 26%,rgba(3,14,21,.98)) 0%,rgba(4,18,27,.9) 48%,rgba(4,18,27,.24) 100%); content:""; pointer-events:none; }
+[data-in-house-theme="receiving"]>.in-house-tool-hero::before { background-image:url('../../assets/images/RECEVING.png'); background-position:66% center; }
+[data-in-house-theme="location-move"]>.in-house-tool-hero::before { background-image:url('../../assets/images/MOVE BY LOCATION.png'); background-position:74% center; }
+[data-in-house-theme="batch-inventory"]>.in-house-tool-hero::before { background-image:url('../../assets/images/BATCH INVENTORY.png'); background-position:70% center; }
+.in-house-tool-page:has(.bpl-app)>.in-house-tool-hero::before { background-image:url('../../assets/images/PICKING LIST.png'); background-position:75% center; }
 .in-house-tool-hero h2 { margin:7px 0 10px; font-size:clamp(38px,5vw,56px); line-height:1; letter-spacing:-.055em; }
-.in-house-tool-hero p { max-width:680px; margin:0; color:color-mix(in srgb,currentColor 76%,transparent); }
+.in-house-tool-hero p { max-width:680px; margin:0; color:rgba(248,251,255,.8); }
 .in-house-tool-hero .badge { background:color-mix(in srgb,currentColor 14%,transparent); color:inherit; }
 .in-house-tool-module { min-height:300px; }
 

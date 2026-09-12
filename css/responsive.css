@@ -23,8 +23,8 @@ html,body,.app-shell,.workspace,.main-content { min-width:0; }
   .sidebar,.app-shell.is-collapsed .sidebar { width:min(300px,88vw); transform:translateX(-101%); box-shadow:var(--shadow); }
   .app-shell.is-collapsed .brand-logo,.app-shell.is-collapsed .nav-item span,.app-shell.is-collapsed .version { opacity:1; pointer-events:auto; }
   .app-shell.is-collapsed .sidebar-header { min-height:104px; padding:20px 14px 18px 18px; }
-  .app-shell.is-collapsed .brand { width:auto; height:60px; flex:1; justify-content:flex-start; padding:6px 8px; }
-  .app-shell.is-collapsed .brand-logo { width:100%; max-width:148px; height:100%; flex:initial; object-position:left center; }
+  .app-shell.is-collapsed .brand { display:flex; width:auto; height:60px; flex:1; justify-content:flex-start; padding:6px 8px; }
+  .app-shell.is-collapsed .brand-logo { width:112px; max-width:112px; height:46px; flex:initial; object-position:left center; }
   .app-shell.is-collapsed .collapse-button,.collapse-button { display:none; }
   .app-shell.is-collapsed .sidebar-mission,.sidebar-mission { opacity:1; pointer-events:auto; }
   .app-shell.is-collapsed .nav-item { justify-content:flex-start; gap:13px; padding-inline:13px; }
@@ -40,6 +40,7 @@ html,body,.app-shell,.workspace,.main-content { min-width:0; }
   .dashboard-intro { height:auto; min-height:282px; padding:28px 24px; }
   .dashboard-hero-visual { width:40%; opacity:.5; }
   .dashboard-title strong { font-size:52px; }.dashboard-title span { font-size:39px; }
+  .dashboard-brand-logo { width:220px; height:54px; }
   .dashboard-benefits { flex-wrap:wrap; gap:16px 0; }
   .dashboard-benefits li { width:50%; min-width:0; }
   .dashboard-benefits li:nth-child(3) { padding-left:0; border-left:0; }
@@ -88,6 +89,7 @@ html,body,.app-shell,.workspace,.main-content { min-width:0; }
   .dashboard-tool-version { left:82px; }
   .dashboard-card-arrow { display:none; }
   .dashboard-client-card { height:96px; }
+  .dashboard-client-product { right:-7%; width:48%; }
   .library-view .tool-card { min-height:180px; }
   .toast-region { right:12px; bottom:12px; width:calc(100vw - 24px); }
 }
