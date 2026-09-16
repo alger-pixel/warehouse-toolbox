@@ -5,8 +5,35 @@
 .tci-app .button-neutral { background:var(--panel-secondary); color:var(--text-primary); }
 .tci-app .inventory-table { max-width:100%; overflow-x:auto; }
 .tci-app table { min-width:1150px; }
-.tci-app dialog { width:min(760px,90vw); max-height:85vh; overflow:auto; background:var(--panel-bg); color:var(--text-primary); border:1px solid var(--border-color); border-radius:16px; padding:24px; }
-.tci-app dd { margin:6px 0 20px; white-space:pre-wrap; overflow-wrap:anywhere; }
+/* Read-only unit detail, scoped separately from the inventory table. */
+#tci-detail { box-sizing:border-box; width:min(1040px,calc(100vw - 32px)); max-width:none; max-height:88vh; max-height:88dvh; margin:auto; overflow:auto; background:var(--panel-bg); color:var(--text-primary); border:1px solid var(--border-color); border-radius:16px; padding:0 24px 24px; }
+#tci-detail::backdrop { background:#0008; }
+#tci-detail .tci-detail-header { position:sticky; top:0; z-index:1; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 0; background:var(--panel-bg); }
+#tci-detail .tci-detail-header h3 { margin:0; font-size:16px; line-height:1.4; }
+#tci-detail #tci-close { flex-shrink:0; width:auto; min-height:40px; padding:8px 14px; font-size:12px; }
+#tci-detail .tci-detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+#tci-detail .tci-detail-column { display:flex; flex-direction:column; gap:16px; min-width:0; }
+#tci-detail .tci-detail-section { min-width:0; border:1px solid var(--border-color); border-radius:10px; padding:18px; background:var(--panel-secondary); }
+#tci-detail .tci-detail-section h4 { margin:0 0 16px; font-size:13px; line-height:1.4; letter-spacing:.04em; }
+#tci-detail .tci-detail-fields { margin:0; display:grid; gap:12px; }
+#tci-detail .tci-detail-field { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr); align-items:baseline; gap:6px 14px; min-width:0; }
+#tci-detail dt { color:var(--text-secondary); font-size:11px; line-height:1.5; overflow-wrap:anywhere; }
+#tci-detail dd { margin:0; min-width:0; font-size:14px; line-height:1.5; font-weight:600; white-space:pre-wrap; overflow-wrap:anywhere; }
+#tci-detail .is-long, #tci-detail .is-step-labor { grid-template-columns:minmax(0,1fr); }
+#tci-detail .is-long { gap:7px; padding-bottom:4px; }
+#tci-detail .is-long dd { font-weight:400; }
+#tci-detail .tci-step-labor { margin:4px 0 0; display:grid; gap:6px; font-variant-numeric:tabular-nums; }
+#tci-detail .tci-step-labor>div { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:baseline; gap:12px; }
+#tci-detail .tci-detail-badge { display:inline-block; max-width:100%; padding:3px 8px; border:1px solid var(--border-color); border-radius:6px; background:var(--panel-bg); font-size:12px; }
+#tci-detail .tci-detail-badge.is-completed { color:var(--success); background:color-mix(in srgb,var(--success) 12%,var(--panel-bg)); }
+@media(max-width:1000px) { #tci-detail .tci-detail-grid { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:600px) {
+  #tci-detail { width:calc(100vw - 24px); padding:0 14px 14px; }
+  #tci-detail .tci-detail-header { padding:14px 0; gap:10px; }
+  #tci-detail .tci-detail-header h3 { font-size:14px; }
+  #tci-detail .tci-detail-section { padding:14px; }
+  #tci-detail .tci-detail-field { grid-template-columns:minmax(0,1fr); }
+}
 .client-tool-workspace:has(.tci-app) .client-tool-hero { background:#4c548e; color:#fff; }
 @media(max-width:1000px) { .tci-app .inventory-fields { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:600px) { .tci-app .inventory-fields { grid-template-columns:minmax(0,1fr); } }

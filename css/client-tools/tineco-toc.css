@@ -66,3 +66,14 @@
 .tcu-status.is-ready-0,.tcu-status.is-transition { --tcu-status-color:#437ea9; }
 .tcu-status.is-ready-1 { --tcu-status-color:#a9620a; }
 .tcu-status.is-ready-2 { --tcu-status-color:#27855a; }
+
+/* Advisory inventory stays separate from the actual parts list and save controls. */
+.tcu-inventory { min-width:0; margin:14px 0; }
+.tcu-inventory>h4 { margin:0 0 8px; font-size:13px; }
+.tcu-inventory-part { min-width:0; margin:8px 0; padding:10px 12px; border:1px solid var(--border-color); border-radius:8px; background:var(--panel-secondary); }
+.tcu-inventory-part h4 { margin:0 0 8px; font-size:13px; overflow-wrap:anywhere; }
+.tcu-inventory-part p { margin:0; font-size:13px; color:var(--text-secondary); }
+.tcu-inventory-part table { width:100%; min-width:0; table-layout:fixed; border-collapse:collapse; font-size:13px; }
+.tcu-inventory-part th,.tcu-inventory-part td { padding:6px 0; text-align:left; overflow-wrap:anywhere; }
+.tcu-inventory-part th { color:var(--text-secondary); font-size:11px; }
+.tcu-inventory-part th:last-child,.tcu-inventory-part td:last-child { width:88px; padding-left:12px; text-align:right; font-variant-numeric:tabular-nums; }

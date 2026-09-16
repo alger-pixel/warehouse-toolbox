@@ -57,3 +57,20 @@ test('parts copy controls retain the responsive table wrapper without page overf
  const h=fixture(),html=h.tool._test.detailHtml(h.data.results[0]),css=fs.readFileSync('css/in-house-tools/batch-picking-list.css','utf8');
  assert.match(html,/inventory-table bpl-parts-table/);assert.match(css,/\.bpl-app[^}]*min-width:0/);assert.match(css,/\.bpl-parts-table td:first-child[^}]*overflow-wrap:anywhere/);assert.ok(css.includes('@media(max-width:540px)'));assert.match(css,/\.bpl-parts-heading \{ align-items:flex-start; flex-direction:column; \}/);
 });
+
+for(const [raw,table,detail] of [['COMPLETED | 18 MIN','18 min','18 min'],['CANCELLED | 7 MIN','7 min<br>Cancelled','7 min (Cancelled)'],['','—','—'],[null,'—','—'],[undefined,'—','—'],['<img src=x onerror="bad()">','&lt;img src=x onerror=&quot;bad()&quot;&gt;','&lt;img src=x onerror=&quot;bad()&quot;&gt;']]) test(`process time table and detail render safely: ${raw}`,()=>{
+ const h=fixture();h.data.results[0].processTime=raw;
+ const html=h.tool._test.resultHtml(h.data),metadata=h.tool._test.detailHtml(h.data.results[0]);
+ assert.ok(html.includes('<th scope="col">Status</th><th scope="col">PROCESS TIME</th>'));
+ assert.ok(html.includes(`<td>${table}</td>`));assert.ok(metadata.includes(`<dt>Process Time</dt><dd>${detail}</dd>`));
+ assert.doesNotMatch(html,/<img/);assert.doesNotMatch(metadata,/<img/);assert.match(html,/<div class="inventory-table"><table>/);
+});
+test('Excel exports raw PROCESS TIME and blank legacy cells without changing other sheets',()=>{
+ const h=fixture(),baseline=h.tool._test.workbook(h.data);
+ for(const raw of ['COMPLETED | 18 MIN','CANCELLED | 7 MIN','unexpected raw value','',null,undefined]) {
+  h.data.results[0].processTime=raw;const book=h.tool._test.workbook(h.data);
+  const rows=XLSX.utils.sheet_to_json(book.Sheets['PICKING LISTS'],{header:1,defval:''});
+  const index=rows[0].indexOf('PROCESS TIME');assert.equal(rows[0][index-1],'Status');assert.equal(rows[1][index],raw??'');
+  for(const name of ['PART USED SUMMARY','PACKAGE DETAIL'])assert.deepEqual(book.Sheets[name],baseline.Sheets[name]);
+ }
+});

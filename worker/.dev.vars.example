@@ -25,3 +25,8 @@ OPENAI_COMMAND_DIAGNOSTICS=false
 FEISHU_USER_TABLE_ID=
 # Secret-only random administration key (at least 32 characters). Never commit a real value.
 USER_MANAGEMENT_ADMIN_KEY=
+
+# Shared warehouse inventory lookup. Worker-only secret; never commit real keys.
+MKITE_WAREHOUSE_API_KEY=
+# Optional; defaults to this HTTPS endpoint.
+MKITE_WAREHOUSE_API_URL=https://tool.mkite.cn/api/v1/open/warehouse-inventory/locations

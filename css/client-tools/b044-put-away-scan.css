@@ -182,3 +182,14 @@
 .pas-actual-parts .pas-scan-entry { display:flex; gap:10px; }
 .pas-actual-parts .pas-scan-entry input { flex:1; min-width:0; }
 .pas-actual-parts .pas-scan-entry .button { flex:0 0 auto; padding:16px 24px; }
+
+/* Live inventory is advisory and separate from required possible-part quantities. */
+.pas-parts-list .pas-part-location { display:block; flex:1 1 260px; min-width:0; max-width:100%; }
+.pas-inventory-location { margin-top:8px; min-width:0; font-size:12px; }
+.pas-inventory-location p { margin:4px 0; }
+.pas-inventory-location table { width:100%; min-width:0; table-layout:fixed; border-collapse:collapse; }
+.pas-inventory-location th,.pas-inventory-location td { padding:5px 4px; text-align:left; overflow-wrap:anywhere; }
+.pas-inventory-location th:first-child,.pas-inventory-location td:first-child { width:92px; }
+.pas-inventory-location th:last-child,.pas-inventory-location td:last-child { width:84px; text-align:right; font-variant-numeric:tabular-nums; }
+
+.pas-part-location .pas-inventory-heading { margin:10px 0 4px; font-size:12px; font-weight:600; }

@@ -104,6 +104,21 @@ export function createPickingListService(config, records, options = {}) {
       if (Object.entries(fields).some(([k,v]) => textValue(confirmed.fields?.[k]) !== v)) throw new PickingListError('PL_PERSISTENCE_UNCONFIRMED', 'Completion / parts persistence not confirmed. Retry the same final scan.');
       options.onStage?.('PL_COMPLETION_CONFIRMED', { operationState: 'confirmed' });
     },
+    async persistProcessTime(model) {
+      configured();
+      const start = Date.parse(model.persistedAt), end = Date.parse(model.processTerminal?.at);
+      const outcome = model.processTerminal?.outcome;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || !['COMPLETED', 'CANCELLED'].includes(outcome)) return;
+      const value = `${outcome} | ${Math.max(1, Math.ceil((end - start) / 60000))} MIN`;
+      const record = await records.getRecord({ ...args, recordId: model.pickingListRecordId });
+      if (record.record_id !== model.pickingListRecordId || textValue(record.fields?.[F.number]) !== model.pickingListNumber) throw new PickingListError('PL_MASTER_CHANGED', 'Picking List identity changed.');
+      const existing = textValue(record.fields?.[F.processTime]);
+      if (existing === value) return;
+      if (existing || (record.fields?.[F.processTime] != null && existing === null)) throw new PickingListError('PROCESS_TIME_CONFLICT', 'Existing PROCESS TIME differs from the persisted terminal event.');
+      await records.updateRecord({ ...args, recordId: model.pickingListRecordId, fields: { [F.processTime]: value } });
+      const confirmed = await records.getRecord({ ...args, recordId: model.pickingListRecordId });
+      if (confirmed.record_id !== model.pickingListRecordId || textValue(confirmed.fields?.[F.number]) !== model.pickingListNumber || textValue(confirmed.fields?.[F.processTime]) !== value) throw new PickingListError('PL_PERSISTENCE_UNCONFIRMED', 'PROCESS TIME persistence was not confirmed. Retry the same terminal operation.');
+    },
     async appendLifecycle(model, lifecycleText) {
       configured();
       const record = await records.getRecord({ ...args, recordId: model.pickingListRecordId });

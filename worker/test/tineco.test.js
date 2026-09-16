@@ -76,3 +76,76 @@ test('pause requires a note and lost response retries labor and GENERAL NOTE exa
  const f=fixture([unit('Pending',2)]),visit=await begin(f);await assert.rejects(f.service.pause({requestId,pauseNote:' ',data:visit.data}),e=>e.code==='PAUSE_NOTE_REQUIRED');
  f.tick();const update=f.records.updateRecord;f.records.updateRecord=async args=>{await update(args);throw Error('lost');};const input={requestId,pauseNote:'Break in work',data:visit.data};await assert.rejects(f.service.pause(input));const after=structuredClone(f.data);f.tick(30*60000);const saved=await f.service.pause(input);assert.equal(saved.phase,'paused');assert.deepEqual(f.data,after);assert.equal(f.data[0].fields['LABOR MINUTES'],17);assert.equal((f.data[0].fields['GENERAL NOTE'].match(/PAUSED - NOTE/g)||[]).length,1);
 });
+
+const stepLabor=f=>JSON.parse(f.data[0].fields['LABOR MINUTES PER STEP']);
+for(const step of [1,2,3])test(`step ${step} pause/resume accumulates only new labor with lost-response replay`,async()=>{
+ const record=unit('Pending',step);record.fields['LABOR MINUTES PER STEP']='{"version":1,"preQc":2,"repair":3,"finalQc":4}';
+ const f=fixture([record]);await begin(f);f.tick(3*60000);
+ const input={requestId,data:form,pauseNote:'Pause'},update=f.records.updateRecord;let once=true;
+ f.records.updateRecord=async args=>{const result=await update(args);if(once){once=false;throw Error('lost');}return result;};
+ await assert.rejects(f.service.pause(input));f.tick(20*60000);await f.service.pause(input);await f.service.pause(input);
+ const expected={version:1,preQc:2,repair:3,finalQc:4},key=['preQc','repair','finalQc'][step-1];expected[key]+=3;
+ assert.deepEqual(stepLabor(f),expected);assert.equal(f.data[0].fields['LABOR MINUTES'],18);
+ await f.service.begin({requestId:nextId,sn:record.fields.SN});f.tick(4*60000);await f.service.pause({...input,requestId:nextId});expected[key]+=4;
+ assert.deepEqual(stepLabor(f),expected);assert.equal(f.data[0].fields['LABOR MINUTES'],22);
+});
+for(const [step,outcome] of [[1,'NFF'],[1,'Awaiting Parts'],[2,'Can Not Be Fixed'],[3,'Completed'],[3,'Final QC Fail'],[3,'Client Confirmed Disposal']])test(`${outcome} allocates current step labor once and keeps legacy total`,async()=>{
+ const f=fixture([unit('Pending',step)]);await begin(f);assert.equal(f.data[0].fields['LABOR MINUTES PER STEP'],undefined);f.tick(61000);
+ const input={requestId,outcome,data:form},update=f.records.updateRecord;let once=true;
+ f.records.updateRecord=async args=>{const result=await update(args);if(once){once=false;throw Error('lost');}return result;};
+ await assert.rejects(f.service.finish(input));f.tick(600000);await f.service.finish(input);await f.service.finish(input);
+ const expected={version:1,preQc:0,repair:0,finalQc:0};expected[['preQc','repair','finalQc'][step-1]]=2;
+ assert.deepEqual(stepLabor(f),expected);assert.equal(f.data[0].fields['LABOR MINUTES'],17);
+});
+for(const raw of ['broken','{"version":2,"preQc":1,"repair":2,"finalQc":3}','{"version":1,"preQc":-1,"repair":2,"finalQc":3}','{"version":1,"preQc":"1","repair":2,"finalQc":3}'])test(`invalid step labor preserved: ${raw}`,async()=>{
+ const record=unit();record.fields['LABOR MINUTES PER STEP']=raw;const f=fixture([record]);await begin(f);const before=structuredClone(f.data);
+ for(const action of ['pause','finish'])await assert.rejects(f.service[action]({requestId,pauseNote:'break',outcome:'NFF',data:form}),e=>e.code==='TINECO_STEP_LABOR_INVALID');
+ assert.deepEqual(f.data,before);
+});
+
+for(const from of [0,1])for(const failure of ['none','before-write','lost-response','checkpoint'])test(`transition ${from+1} checkpoints total and step once: ${failure}`,async()=>{
+ const record=unit('Pending',from+1);record.fields['LABOR MINUTES']=5;record.fields['LABOR MINUTES PER STEP']='{"version":1,"preQc":5,"repair":0,"finalQc":0}';
+ const f=fixture([record]),visit=await begin(f);f.tick(4*60000);
+ const input={requestId,from,to:from+1,data:form},update=f.records.updateRecord,put=f.storage.put;let once=true;
+ f.records.updateRecord=async args=>{if(once&&failure==='before-write'){once=false;throw Error('failed');}const result=await update(args);if(once&&failure==='lost-response'){once=false;throw Error('lost');}return result;};
+ f.storage.put=async(k,v)=>{if(once&&failure==='checkpoint'&&v.lastMutation?.action==='step'&&!v.mutation){once=false;throw Error('checkpoint failed');}return put(k,v);};
+ if(failure!=='none'){await assert.rejects(f.service.step(input));f.tick(20*60000);}
+ const saved=await f.service.step(input);const before=structuredClone(f.data),writes=f.writes.length;f.tick();await f.service.step(input);
+ assert.deepEqual(f.data,before);assert.equal(f.writes.length,writes);assert.equal(f.data[0].fields['LABOR MINUTES'],9);
+ assert.deepEqual(stepLabor(f),{version:1,preQc:from===0?9:5,repair:from===1?4:0,finalQc:0});
+ assert.equal(saved.startedAt,visit.startedAt);assert.equal(saved.previousLaborMinutes,5);assert.equal(f.memory.get(`visit:${requestId}`).stepLaborCommitted,4);
+});
+for(const outcome of ['Completed','Client Confirmed Disposal'])test(`prior transitions preserve cumulative rounding and ${outcome} adds only final uncommitted labor`,async()=>{
+ const f=fixture([unit()]);await begin(f);
+ f.tick(22000);await f.service.step({requestId,from:0,to:1,data:form});assert.equal(f.data[0].fields['LABOR MINUTES'],16);
+ f.tick(43000);await f.service.step({requestId,from:1,to:2,data:form});assert.equal(f.data[0].fields['LABOR MINUTES'],17);
+ assert.deepEqual(stepLabor(f),{version:1,preQc:1,repair:1,finalQc:0});
+ f.tick(56000);const saved=await f.service.finish({requestId,outcome,data:form});
+ assert.equal(saved.result.sessionLaborMinutes,Math.max(1,Math.ceil(121000/60000)));assert.equal(saved.result.laborMinutes,18);
+ assert.deepEqual(stepLabor(f),{version:1,preQc:1,repair:1,finalQc:1});f.tick();await f.service.finish({requestId,outcome,data:form});assert.equal(f.data[0].fields['LABOR MINUTES'],18);
+});
+test('Pause after transition adds only new labor and resume preserves checkpoints',async()=>{
+ const f=fixture();await begin(f);f.tick(61000);await f.service.step({requestId,from:0,to:1,data:form});
+ f.tick(61000);await f.service.pause({requestId,pauseNote:'Break',data:form});assert.equal(f.data[0].fields['LABOR MINUTES'],3);assert.deepEqual(stepLabor(f),{version:1,preQc:2,repair:1,finalQc:0});
+ await f.service.begin({requestId:nextId,sn:f.data[0].fields.SN});f.tick(61000);await f.service.pause({requestId:nextId,pauseNote:'Break again',data:form});assert.equal(f.data[0].fields['LABOR MINUTES'],5);assert.deepEqual(stepLabor(f),{version:1,preQc:2,repair:3,finalQc:0});
+});
+test('immediate transitions and Finish share a single minimum minute',async()=>{
+ const f=fixture();await enter(f,2);await f.service.finish({requestId,outcome:'Completed',data:form});assert.equal(f.data[0].fields['LABOR MINUTES'],1);assert.deepEqual(stepLabor(f),{version:1,preQc:1,repair:0,finalQc:0});
+});
+test('backward navigation allocates the outgoing step without restarting rounding',async()=>{
+ const f=fixture([unit('Pending',2)]);await begin(f);f.tick(61000);await f.service.step({requestId,from:1,to:0,data:form});f.tick(61000);await f.service.step({requestId,from:0,to:1,data:form});f.tick(61000);await f.service.finish({requestId,outcome:'Can Not Be Fixed',data:form});assert.equal(f.data[0].fields['LABOR MINUTES'],19);assert.deepEqual(stepLabor(f),{version:1,preQc:1,repair:3,finalQc:0});
+});
+test('malformed allocation blocks transition before CURRENT STEP or labor changes',async()=>{
+ const f=fixture([unit()]);await begin(f);f.data[0].fields['LABOR MINUTES PER STEP']='unknown';const before=structuredClone(f.data);await assert.rejects(f.service.step({requestId,from:0,to:1,data:form}),e=>e.code==='TINECO_STEP_LABOR_INVALID');assert.deepEqual(f.data,before);
+});
+
+test('direct Repair re-entry persists visit identity across service reconstruction and Pause replays once',async()=>{
+ const record=unit('Pending',2);record.fields['LABOR MINUTES PER STEP']='{"version":1,"preQc":5,"repair":10,"finalQc":0}';
+ const f=fixture([record]),visit=await begin(f);
+ assert.equal(visit.step,1);assert.equal((await f.storage.get(`visit:${requestId}`)).recordId,record.record_id);
+ const service=createTinecoService({appToken:'base',tinecoTocUnitTableId:'tineco',warehouseTimeZone:'America/Toronto'},f.records,f.storage,{now:()=>visit.startedAt+120000});
+ const restored=await service.begin({requestId,sn:visit.sn});assert.equal(restored.entry,visit.entry);assert.equal(restored.startedAt,visit.startedAt);
+ const input={requestId,pauseNote:'Resume lifecycle regression',data:form};await service.pause(input);const before=structuredClone(f.data);await service.pause(input);
+ assert.deepEqual(f.data,before);assert.equal(f.data[0].fields['LABOR MINUTES'],17);assert.deepEqual(stepLabor(f),{version:1,preQc:5,repair:12,finalQc:0});assert.equal(f.data[0].fields['GENERAL NOTE'].match(/PAUSED - NOTE/g).length,1);
+ await assert.rejects(service.pause({...input,requestId:'missing-session-12345678'}),e=>e.code==='SESSION_NOT_FOUND');
+});

@@ -16,6 +16,7 @@ function setup(operational = true) {
   const window = { setTimeout() {}, MkiteB044Picking: { async complete(input) { calls.push(input); return { partsPersisted: true, status: 'Processed', completedAt: '2026-09-07T12:00:00Z', pickingListComplete: true }; } } };
   vm.runInNewContext(fs.readFileSync('js/services/package-identifier-matcher.js', 'utf8'), { window });
   vm.runInNewContext(fs.readFileSync('js/shared/picking-parts.js', 'utf8'), { window });
+  vm.runInNewContext(fs.readFileSync('js/services/inventory-location-lookup.js', 'utf8'), { window });
   vm.runInNewContext(fs.readFileSync('js/client-tools/b044/put-away-scan.js', 'utf8'), { window, document });
   const module = window.MkiteClientToolModules['b044.put-away-scan'];
   const context = { root, storage: { get: () => structuredClone(saved), set: (_, value) => { saved = structuredClone(value); }, remove: () => { saved = null; } }, audio: { setEnabled() {}, success() {}, failure() {}, warning() {} }, toast: { show: message => notices.push(message) } };
@@ -521,4 +522,39 @@ test('fresh Processing reconciliation replaces historical completed state and en
  h.window.MkiteB044Picking.reconcile=async()=>({cancellationAllowed:true,packages:[{packageRecordId:'rec1',packageStatus:'Processing',currentStatus:'Processing',completedAt:null,historicalCompletionExists:true,reconciliationRequired:false}]});
  await h.tool.reconcilePickingList();assert.equal(h.tool.counts().remaining,1);assert.equal(s.workflowError,'');assert.match(h.root.innerHTML,/0 \/ 1 packages completed/);assert.doesNotMatch(h.tool.workflowPanel(),/id="pas-cancel-pl" disabled/);
  h.window.confirm=()=>true;let cancelled=false;h.window.MkiteB044Picking.cancel=async()=>{cancelled=true;return {...s.pl,phase:'cancelled',operational:false};};await h.tool.cancelPickingList();assert.equal(cancelled,true);
+});
+
+const settleLocations=()=>new Promise(resolve=>setImmediate(resolve));
+function locationFixture(){const h=setup(),requests=[],pending=[];h.window.MkiteApiClient={post:(path,body)=>{requests.push({path,body:structuredClone(body)});return new Promise((resolve,reject)=>pending.push({resolve,reject}));}};return {...h,requests,pending};}
+const inventoryResponse=(sku,locations)=>({ok:true,data:{ok:true,sku,total:locations.length,locations:locations.map(([locationCode,availableQuantity,warehouseCode='MKS66'])=>({locationCode,availableQuantity,warehouseCode}))}});
+test('possible-part codes lookup once per SKU; descriptions excluded; locations and quantities preserve order',async()=>{
+ const h=locationFixture(),rows=[{commandRaw:'M8LS*14 说明书'},{commandRaw:'M8LS*14 CARTON-330-226-328'}],before=structuredClone(h.tool.getState());
+ assert.match(h.tool.possiblePartsMarkup(rows),/Looking up inventory location/);h.tool.possiblePartsMarkup(rows);
+ assert.deepEqual(h.requests.map(r=>r.body),[{sku:'CARTON-330-226-328',warehouseCodes:['MKS66','TO20']},{sku:'M8LS*14',warehouseCodes:['MKS66','TO20']}]);assert.ok(h.requests.every(r=>r.path==='/api/inventory/lookup'));
+ h.pending[0].resolve(inventoryResponse('CARTON-330-226-328',[['ZONE4-PART-02',1,'TO20']]));h.pending[1].resolve(inventoryResponse('M8LS*14',[['Z-FIRST',1,'TO20'],['<A-SECOND>',null,'MKS66'],['ZERO',0,'TO20']]));await settleLocations();
+ const html=h.tool.possiblePartsMarkup(rows);assert.match(html,/WAREHOUSE[\s\S]*LOCATION[\s\S]*AVAILABLE/);assert.match(html,/TO20<\/td><td>Z-FIRST<\/td><td>1/);assert.match(html,/MKS66<\/td><td>&lt;A-SECOND&gt;<\/td><td>—/);assert.match(html,/TO20<\/td><td>ZERO<\/td><td>0/);assert.ok(html.indexOf('Z-FIRST')<html.indexOf('&lt;A-SECOND&gt;'));assert.match(html,/TO20<\/td><td>ZONE4-PART-02<\/td><td>1/);assert.doesNotMatch(html,/recommended|preferred|primary|best location/i);assert.equal(h.requests.length,2);assert.deepEqual(structuredClone(h.tool.getState()),before);h.module.cleanup();
+});
+for(const mode of ['empty','error'])test(`lookup ${mode} is advisory and never changes completion payload`,async()=>{
+ const h=locationFixture();h.tool.possiblePartsMarkup([{commandRaw:'M8LS*14'}]);
+ if(mode==='empty')h.pending[0].resolve(inventoryResponse('M8LS*14',[]));else h.pending[0].reject(Error('secret upstream URL'));
+ await settleLocations();assert.match(h.tool.locationMarkup('M8LS*14'),mode==='empty'?/No inventory location found/:/Inventory location unavailable/);assert.doesNotMatch(h.tool.locationMarkup('M8LS*14'),/secret/);
+ h.tool.openScanMode();await h.tool.processScan('TRACK1');await h.tool.processScan('TRACK1');assert.equal(h.calls.length,1);assert.doesNotMatch(JSON.stringify(h.calls),/location|inventory|availableQuantity/);h.module.cleanup();
+});
+test('lookup concurrency capped at four and late responses do not update a new mount',async()=>{
+ const h=locationFixture(),rows=Array.from({length:9},(_,i)=>({commandRaw:`M8LS-${i}`}));h.tool.possiblePartsMarkup(rows);assert.equal(h.requests.length,4);
+ h.pending[0].resolve(inventoryResponse(h.requests[0].body.sku,[['FIRST',1]]));await settleLocations();assert.equal(h.requests.length,5);
+ h.module.cleanup();h.module.init(h.context);const html=h.root.innerHTML;h.pending[1].resolve(inventoryResponse(h.requests[1].body.sku,[['STALE',1]]));await settleLocations();assert.equal(h.requests.length,5);assert.equal(h.root.innerHTML,html);assert.doesNotMatch(h.tool.locationMarkup(h.requests[1].body.sku),/STALE/);h.module.cleanup();
+});
+test('inventory markup is scoped and responsive without changing A4 print code',()=>{
+ const css=fs.readFileSync('css/client-tools/b044-put-away-scan.css','utf8');assert.match(css,/\.pas-inventory-location table \{[^}]*width:100%[^}]*min-width:0[^}]*table-layout:fixed/);assert.match(css,/\.pas-inventory-location th,\.pas-inventory-location td \{[^}]*overflow-wrap:anywhere/);
+ assert.ok(fs.readFileSync('index.html','utf8').includes('js/services/inventory-location-lookup.js'));assert.doesNotMatch(fs.readFileSync('js/client-tools/b044/picking-workflow.js','utf8'),/inventory\/lookup|MkiteInventoryLocations/);
+});
+
+test('recognized possible SKU has inline Inventory Location heading without changing parser output',()=>{
+ const h=locationFixture(),html=h.tool.possiblePartsMarkup([{commandRaw:'M8LS*14 说明书 9FWPT011100'}]);assert.match(html,/M8LS\*14[\s\S]*class="pas-inventory-heading">Inventory Location/);assert.equal(h.requests.length,1);assert.deepEqual(h.requests[0].body,{sku:'M8LS*14',warehouseCodes:['MKS66','TO20']});assert.doesNotMatch(html,/9FWPT011100/);h.module.cleanup();
+});
+test('A4 snapshot reuses current cache immediately without business writes or extra lookups',async()=>{
+ const h=locationFixture(),printPl={packages:[{commandRaw:'CARTON-330-226-328 M8LS*14'}]};h.tool.possiblePartsMarkup(printPl.packages);assert.equal(h.requests.length,2);
+ h.pending[0].resolve(inventoryResponse('CARTON-330-226-328',[['ZONE4-PART-02',1,'TO20']]));h.pending[1].reject(Error('offline'));await settleLocations();const before=h.requests.length;
+ assert.deepEqual(structuredClone(h.tool.inventoryPrintSnapshot(printPl)),{'CARTON-330-226-328':{state:'ready',locations:[{warehouseCode:'TO20',locationCode:'ZONE4-PART-02',availableQuantity:1}]},'M8LS*14':{state:'error'}});assert.equal(h.requests.length,before);assert.equal(h.calls.length,0);h.module.cleanup();
 });

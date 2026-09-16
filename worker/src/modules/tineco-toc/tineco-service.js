@@ -1,4 +1,4 @@
-import { IDENTITY, TEXT_FIELDS, NUMBER_FIELDS, FORM_FIELDS, fail } from './tineco-fields.js';
+import { IDENTITY, TEXT_FIELDS, NUMBER_FIELDS, FORM_FIELDS, STEP_LABOR_FIELD, parseStepLabor, fail } from './tineco-fields.js';
 const text=v=>Array.isArray(v)?v.map(x=>x.text||'').join(''):String(v??'').trim();
 const rawText=v=>Array.isArray(v)?v.map(x=>x.text||'').join(''):String(v??'');
 const norm=v=>text(v).toUpperCase();
@@ -22,7 +22,7 @@ export function createTinecoService(config,records,storage,{now=()=>Date.now()}=
  async function load(input){const j=await storage.get(key(input));if(!j)fail('SESSION_NOT_FOUND','Repair session was not found.');if(j.model!==2)fail('SESSION_MODEL_CHANGED','This draft uses the old visit model. Resolve it before starting a new entry.');return j;}
  const same=(fields,patch)=>Object.entries(patch).every(([k,v])=>text(fields?.[k])===text(v));
  async function current(j){return records.getRecord({...args(),recordId:j.recordId});}
- async function owned(j){if(await storage.get(reservation(j.sn))!==j.requestId)fail('UNIT_ALREADY_ACTIVE','This unit belongs to another active entry.');const record=await current(j),f=identity(record,j);if(f['CLIENT STATUS']!=='Pending'||number(f['TIMES OF RE-ENTER'],'re-entry')!==j.entry||number(f['LABOR MINUTES'],'labor')!==j.previousLaborMinutes||Number(f['CURRENT STEP'])!==j.step+1)fail('UNIT_RECORD_CONFLICT','Unit state changed outside this entry.');return record;}
+ async function owned(j){if(await storage.get(reservation(j.sn))!==j.requestId)fail('UNIT_ALREADY_ACTIVE','This unit belongs to another active entry.');const record=await current(j),f=identity(record,j);if(f['CLIENT STATUS']!=='Pending'||number(f['TIMES OF RE-ENTER'],'re-entry')!==j.entry||number(f['LABOR MINUTES'],'labor')!==j.previousLaborMinutes+(j.stepLaborCommitted||0)||Number(f['CURRENT STEP'])!==j.step+1)fail('UNIT_RECORD_CONFLICT','Unit state changed outside this entry.');return record;}
  // Every external mutation has a durable absolute-value patch. Retry either confirms
  // that patch or retries it against an unchanged preimage; it never increments again.
  async function apply(j,fresh=false){const m=j.mutation;let record;
@@ -33,6 +33,17 @@ export function createTinecoService(config,records,storage,{now=()=>Date.now()}=
  }
  async function mutate(j,action,signature,patch,after,before,create=false){j.mutation={action,signature,patch,after,before,create};await save(j);return apply(j,true);}
  function dataPatch(data){return Object.fromEntries(Object.entries(mapping).map(([k,f])=>[f,k==='totalPartsUsed'?Number(data[k]):k==='repairLevel'&&!data[k]?null:data[k]]));}
+ // Keep the visit clock and original labor baseline: rounding each step separately
+ // would inflate the total. Checkpoints allocate only the cumulative difference.
+ const sessionMinutes=(j,endedAt)=>Math.max(1,Math.ceil((endedAt-j.startedAt)/60000));
+ function stepLaborPatch(j,record,sessionLabor) {
+   const allocation=parseStepLabor(record.fields[STEP_LABOR_FIELD]);
+   const step=['preQc','repair','finalQc'][Number(record.fields['CURRENT STEP'])-1];
+   const delta=sessionLabor-(j.stepLaborCommitted||0);
+   if(!step||!Number.isSafeInteger(delta)||delta<0||!Number.isSafeInteger(allocation[step]+delta))fail('TINECO_STEP_LABOR_INVALID','Step labor allocation could not be safely calculated.');
+   allocation[step]+=delta;
+   return {[STEP_LABOR_FIELD]:JSON.stringify(allocation)};
+ }
  function timestamp(value){const p=new Intl.DateTimeFormat('en-CA',{timeZone:config.warehouseTimeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value));const get=k=>p.find(v=>v.type===k).value;return `${get('year')}/${get('month')}/${get('day')} ${get('hour')}:${get('minute')}`;}
  return {
  async begin(input){const id=key(input),sn=text(input.sn);if(!sn)fail('SN_REQUIRED','Scan or enter the serial number.',400);if(sn.length>500)fail('SN_INVALID','Serial number is too long.',400);
@@ -49,12 +60,14 @@ export function createTinecoService(config,records,storage,{now=()=>Date.now()}=
  },
  async step(input){const j=await load(input),data=form(input.data),signature=JSON.stringify({from:input.from,to:input.to,data});if(j.mutation){if(j.mutation.action!=='step'||j.mutation.signature!==signature)fail('DUPLICATE_SAVE_PREVENTED','Retry the original pending operation.');return apply(j);}if(j.phase!=='draft')fail('SESSION_NOT_EDITABLE','This entry is no longer editable.');if(j.lastMutation?.action==='step'&&j.lastMutation.signature===signature)return view(j);
    if(j.step!==input.from||![0,1,2].includes(input.to)||Math.abs(input.to-input.from)!==1)fail('INVALID_STAGE_TRANSITION','Move through steps in order.');if(input.to>j.step){if(j.step===0)issue(data);if(j.step===1)repair(data);}
-   const fields=await schema();if(data.repairLevel)option(fields,'REPAIR LEVEL',data.repairLevel,'REPAIR_LEVEL_OPTION_NOT_AVAILABLE');const record=await owned(j),patch={...dataPatch(data),'CURRENT STEP':input.to+1,'REPAIR DATE':now()};return mutate(j,'step',signature,patch,{step:input.to,data},record.fields);
+   const fields=await schema();if(data.repairLevel)option(fields,'REPAIR LEVEL',data.repairLevel,'REPAIR_LEVEL_OPTION_NOT_AVAILABLE');const record=await owned(j),endedAt=now(),sessionLabor=sessionMinutes(j,endedAt);
+   const patch={...dataPatch(data),...stepLaborPatch(j,record,sessionLabor),'LABOR MINUTES':j.previousLaborMinutes+sessionLabor,'CURRENT STEP':input.to+1,'REPAIR DATE':endedAt};
+   return mutate(j,'step',signature,patch,{step:input.to,data,stepLaborCommitted:sessionLabor},record.fields);
  },
  async cancel(input){const j=await load(input);if(j.phase==='cancelled')return view(j);if(j.phase!=='draft'||j.mutation)fail('SESSION_NOT_EDITABLE','Resolve pending operations before cancelling.');j.phase='cancelled';await save(j);return view(j);},
  async pause(input){const j=await load(input),data=form(input.data),pauseNote=text(input.pauseNote),signature=JSON.stringify({pauseNote,data});if(!pauseNote)fail('PAUSE_NOTE_REQUIRED','PAUSE NOTE is required.',400);if(pauseNote.length>10000)fail('INVALID_FORM','Pause Note is too long.',400);if(j.mutation){if(j.mutation.action!=='pause'||j.mutation.signature!==signature)fail('DUPLICATE_SAVE_PREVENTED','Retry the original pending pause.');return apply(j);}if(j.phase==='paused'){if(j.lastMutation?.signature!==signature)fail('DUPLICATE_SAVE_PREVENTED','This entry is already paused.');return view(j);}if(j.phase!=='draft')fail('SESSION_NOT_EDITABLE','This entry is no longer editable.');
-   const fields=await schema();if(data.repairLevel)option(fields,'REPAIR LEVEL',data.repairLevel,'REPAIR_LEVEL_OPTION_NOT_AVAILABLE');const record=await owned(j),endedAt=now(),sessionLabor=Math.max(1,Math.ceil((endedAt-j.startedAt)/60000)),labor=j.previousLaborMinutes+sessionLabor;
-   const line=`${timestamp(endedAt)} PAUSED - NOTE: ${pauseNote}`;const existingGeneralNote=rawText(record.fields['GENERAL NOTE']);const generalNote=existingGeneralNote?`${existingGeneralNote}\n${line}`:line;const patch={...dataPatch(data),'GENERAL NOTE':generalNote,'CLIENT STATUS':'Pending','CURRENT STEP':j.step+1,'LABOR MINUTES':labor,'REPAIR DATE':endedAt};
+   const fields=await schema();if(data.repairLevel)option(fields,'REPAIR LEVEL',data.repairLevel,'REPAIR_LEVEL_OPTION_NOT_AVAILABLE');const record=await owned(j),endedAt=now(),sessionLabor=sessionMinutes(j,endedAt),labor=j.previousLaborMinutes+sessionLabor;
+   const line=`${timestamp(endedAt)} PAUSED - NOTE: ${pauseNote}`;const existingGeneralNote=rawText(record.fields['GENERAL NOTE']);const generalNote=existingGeneralNote?`${existingGeneralNote}\n${line}`:line;const patch={...dataPatch(data),...stepLaborPatch(j,record,sessionLabor),'GENERAL NOTE':generalNote,'CLIENT STATUS':'Pending','CURRENT STEP':j.step+1,'LABOR MINUTES':labor,'REPAIR DATE':endedAt};
    return mutate(j,'pause',signature,patch,{data,generalNote,clientStatus:'Pending',result:{sn:j.sn,unitId:j.unitId,laborMinutes:labor,sessionLaborMinutes:sessionLabor,entry:j.entry,pauseNote,resumeStep:j.step}},record.fields);
  },
  async finish(input){const j=await load(input),data=form(input.data),signature=JSON.stringify({outcome:input.outcome,data});if(j.mutation){if(j.mutation.action!=='finish'||j.mutation.signature!==signature)fail('DUPLICATE_SAVE_PREVENTED','Retry the original pending save.');return apply(j);}if(j.phase==='saved'){if(j.lastMutation.signature!==signature)fail('DUPLICATE_SAVE_PREVENTED','This entry is already saved.');return view(j);}if(j.phase!=='draft'||!outcomes[j.step].includes(input.outcome))fail('INVALID_STAGE_TRANSITION','Outcome is unavailable in this step.');if(j.step===0)issue(data);if(j.step>0)repair(data);if(input.outcome==='Final QC Fail'&&!data.finalQcNote)fail('FINAL_QC_FAILURE_REASON_REQUIRED','FINAL QC FAILURE REASON REQUIRED',400);
@@ -62,8 +75,8 @@ export function createTinecoService(config,records,storage,{now=()=>Date.now()}=
    if(disposal&&!data.finalQcNote)fail('DISPOSAL_NOTE_REQUIRED','Write the client-confirmed disposal details in FINAL QC NOTE.',400);
    const result=disposal?'Scrap':input.outcome;
    const fields=await schema(),status=disposal?'Disposal':input.outcome==='Completed'?'Completed':'Pending',final=j.step===2&&!disposal?(status==='Completed'?'Pass':'Fail'):null;option(fields,'CLIENT STATUS',status);option(fields,'REPAIR RESULT',result,'REPAIR_RESULT_OPTION_NOT_AVAILABLE');if(final)option(fields,'FINAL QC RESULT',final,'FINAL_QC_RESULT_OPTION_NOT_AVAILABLE');if(data.repairLevel)option(fields,'REPAIR LEVEL',data.repairLevel,'REPAIR_LEVEL_OPTION_NOT_AVAILABLE');
-   const record=await owned(j),endedAt=now(),sessionLabor=Math.max(1,Math.ceil((endedAt-j.startedAt)/60000)),labor=j.previousLaborMinutes+sessionLabor;
-   const patch={...dataPatch(data),'REPAIR RESULT':result,'FINAL QC RESULT':final,'FINAL QC NOTE':j.step===2?data.finalQcNote:'','CLIENT STATUS':status,'CURRENT STEP':j.step+1,'LABOR MINUTES':labor,'REPAIR DATE':endedAt};if(fields.get('NOTE')?.type===1){const line=`${timestamp(endedAt)} - ENTRY #${j.entry} - STEP ${j.step+1} - ${input.outcome.toUpperCase()} - SESSION LABOR ${sessionLabor} MIN`;patch.NOTE=[text(record.fields.NOTE),line].filter(Boolean).join('\n');}
+   const record=await owned(j),endedAt=now(),sessionLabor=sessionMinutes(j,endedAt),labor=j.previousLaborMinutes+sessionLabor;
+   const patch={...dataPatch(data),...stepLaborPatch(j,record,sessionLabor),'REPAIR RESULT':result,'FINAL QC RESULT':final,'FINAL QC NOTE':j.step===2?data.finalQcNote:'','CLIENT STATUS':status,'CURRENT STEP':j.step+1,'LABOR MINUTES':labor,'REPAIR DATE':endedAt};if(fields.get('NOTE')?.type===1){const line=`${timestamp(endedAt)} - ENTRY #${j.entry} - STEP ${j.step+1} - ${input.outcome.toUpperCase()} - SESSION LABOR ${sessionLabor} MIN`;patch.NOTE=[text(record.fields.NOTE),line].filter(Boolean).join('\n');}
    return mutate(j,'finish',signature,patch,{data,clientStatus:status,repairResult:result,finalQcResult:final||'',result:{sn:j.sn,unitId:j.unitId,repairResult:result,laborMinutes:labor,sessionLaborMinutes:sessionLabor,entry:j.entry}},record.fields);
  }
  };

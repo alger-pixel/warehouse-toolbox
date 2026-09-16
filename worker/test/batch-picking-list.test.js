@@ -55,3 +55,14 @@ test('export retrieves all filtered pages and rejects over-limit results without
 test('search and detail routes accept POST only',async()=>{
  for(const action of ['search','detail'])assert.equal((await handleRequest(new Request(`http://localhost/api/picking-lists/${action}`),{})).status,405);
 });
+
+test('search, detail and export preserve PROCESS TIME text and safely normalize legacy blanks',async()=>{
+ for(const [value,expected] of [['COMPLETED | 18 MIN','COMPLETED | 18 MIN'],[[{text:'CANCELLED | '},{text:'7 MIN'}],'CANCELLED | 7 MIN'],[undefined,''],[null,''],['',''],['<img src=x onerror=alert(1)>','<img src=x onerror=alert(1)>']]) {
+  const f=fixture([record(1,{'PROCESS TIME':value})]);
+  for(const action of ['search','detail']) {
+   const response=await handlePickingSearch(action,f.service,action==='detail'?{recordId:'pl-1'}:{},'id',new Request(`http://localhost/api/picking-lists/${action}`,{method:'POST'}),{});
+   assert.equal(response.status,200);const body=await response.json();assert.equal(action==='search'?body.data.results[0].processTime:body.data.processTime,expected);
+  }
+  assert.equal((await f.service.search({export:true})).results[0].processTime,expected);
+ }
+});

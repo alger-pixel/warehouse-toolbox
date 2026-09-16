@@ -19,3 +19,10 @@ test('dedicated endpoint pages Feishu with GET and performs no record writes',as
  const response=await handleRequest(new Request('https://api.example/api/tineco-toc/inventory/search',{method:'POST',body:'{}'}),{FEISHU_PACKAGE_TABLE_ID:'packages',FEISHU_CLIENT_TABLE_ID:'clients',FEISHU_APP_ID:'inventory-test',FEISHU_APP_SECRET:'secret',FEISHU_BASE_APP_TOKEN:'base',FEISHU_TINECO_TOC_UNIT_TABLE_ID:'tblztQK3EhDAw2Wm'});
  assert.equal(response.status,200);assert.equal((await response.json()).data.summary.found,2);assert.ok(methods.filter(([u])=>u.includes('/bitable/')).every(([,m])=>m==='GET'));
 });
+
+test('per-step inventory text preserves exact JSON and malformed text without inferring legacy values',async()=>{
+ for(const [raw,expected] of [[' {"version":1,"preQc":6,"repair":18,"finalQc":4} ',' {"version":1,"preQc":6,"repair":18,"finalQc":4} '],[[{text:'{"version":1,'},{text:'"preQc":0,"repair":0,"finalQc":0}'}],'{"version":1,"preQc":0,"repair":0,"finalQc":0}'],[undefined,''],[null,''],['broken','broken'],['{"version":2}','{"version":2}']]){
+  const f=setup([row(1,{'LABOR MINUTES PER STEP':raw})]);
+  for(const input of [{},{export:true}]){const result=await f.service.search(input);assert.equal(result.results[0].laborMinutesPerStep,expected);assert.equal(result.results[0]['LABOR MINUTES PER STEP'],expected);assert.equal(result.results[0]['LABOR MINUTES'],'10');assert.ok(result.columns.includes('LABOR MINUTES PER STEP'));}
+ }
+});

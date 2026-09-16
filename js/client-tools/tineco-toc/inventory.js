@@ -14,7 +14,38 @@
   function resultHtml(data){const p=data.pagination,start=p.totalMatched?(p.page-1)*50+1:0;
     return `<div class="inventory-summary">${[['FOUND',data.summary.found],['PENDING',data.summary.pending],['COMPLETED',data.summary.completed],['DISPOSAL',data.summary.disposal],['TOTAL LABOR MINUTES',data.summary.totalLaborMinutes]].map(([k,v])=>`<div><span>${k}</span><strong>${Number(v).toLocaleString('en-CA')}</strong></div>`).join('')}</div><div class="tci-result-toolbar"><p class="tci-result-range">Showing ${start}–${start?start+data.results.length-1:0} of ${p.totalMatched}</p><nav class="tci-pagination" aria-label="Inventory pagination"><span>Page ${p.page} of ${p.totalPages}</span><button type="button" class="button tci-utility" id="tci-previous" ${p.hasPrevious?'':'disabled'}>← PREVIOUS</button><button type="button" class="button tci-utility" id="tci-next" ${p.hasNext?'':'disabled'}>NEXT →</button></nav><button type="button" class="button tci-utility tci-export" id="tci-export" ${p.totalMatched?'':'disabled'} aria-describedby="tci-export-help">EXPORT FILTERED RESULTS</button><p class="tci-export-help" id="tci-export-help">All matching pages · maximum ${data.exportLimit} records</p></div><div class="inventory-table"><table><thead><tr>${columns.map(k=>`<th>${k}</th>`).join('')}</tr></thead><tbody>${data.results.map((r,i)=>`<tr data-tci-row="${i}" tabindex="0" aria-label="View ${esc(r.SN)}">${columns.map((k,j)=>`<td>${j===0?`<button type="button" data-tci-row="${i}">${esc(r[k]||'View unit')}</button>`:esc(r[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${p.totalMatched?'':'<h3>NO TINECO TOC UNITS FOUND</h3><p>Try adjusting the filters.</p>'}`;
   }
-  function detail(index){const row=result?.results[index];if(!row)return;const dialog=q('#tci-detail');dialog.innerHTML=`<button class="button" id="tci-close">CLOSE</button><h3>READ-ONLY UNIT DETAIL</h3><dl>${result.columns.map(k=>`<dt>${esc(k)}</dt><dd>${esc(k==='CURRENT STEP'?step(row[k]):row[k])}</dd>`).join('')}</dl>`;dialog.showModal();q('#tci-close').onclick=()=>dialog.close();}
+  function stepLaborDetail(raw) {
+    if(raw==null||String(raw).trim()==='')return '—';
+    const values=stepLaborValues(raw);
+    if(values.some(v=>v===''))return 'Unavailable';
+    return `<dl class="tci-step-labor">${['PRE-QC','REPAIR','FINAL QC'].map((label,i)=>`<div><dt>${label}</dt><dd>${values[i]} min</dd></div>`).join('')}</dl>`;
+  }
+  const detailGroups=[
+    ['identity','UNIT IDENTITY',['UNIT ID','SN','TRACKING NUMBER','CLIENT ID','WAREHOUSE','REPAIR DATE']],
+    ['notes','ISSUE / NOTES',['ISSUE FOUND','PRE-QC NOTE','GENERAL NOTE']],
+    ['workflow','WORKFLOW STATUS',['CLIENT STATUS','CURRENT STEP','TIMES OF RE-ENTER']],
+    ['labor','PARTS & LABOR',['PART USED DETAIL','TOTAL PARTS USED','LABOR MINUTES','LABOR MINUTES PER STEP']],
+    ['qc','REPAIR / QC RESULT',['REPAIR LEVEL','REPAIR RESULT','FINAL QC RESULT','FINAL QC NOTE']]
+  ];
+  const longFields=new Set(['ISSUE FOUND','PRE-QC NOTE','GENERAL NOTE','PART USED DETAIL','FINAL QC NOTE']);
+  const statusFields=new Set(['CLIENT STATUS','CURRENT STEP','REPAIR RESULT','FINAL QC RESULT']);
+  function detailField(row,key) {
+    let value=key==='LABOR MINUTES PER STEP'?stepLaborDetail(row.laborMinutesPerStep):esc(key==='CURRENT STEP'?step(row[key]):row[key]);
+    if(key==='LABOR MINUTES'&&value!=='')value+=' min';
+    if(statusFields.has(key)&&value)value=`<span class="tci-detail-badge${['Completed','Pass'].includes(row[key])?' is-completed':''}">${value}</span>`;
+    return `<div class="tci-detail-field${longFields.has(key)?' is-long':''}${key==='LABOR MINUTES PER STEP'?' is-step-labor':''}"><dt>${esc(key)}</dt><dd>${value||'—'}</dd></div>`;
+  }
+  function detailSection(row,id,title,fields) {
+    return `<section class="tci-detail-section" aria-labelledby="tci-section-${id}"><h4 id="tci-section-${id}">${esc(title)}</h4><dl class="tci-detail-fields">${fields.map(k=>detailField(row,k)).join('')}</dl></section>`;
+  }
+  function detail(index){
+    const row=result?.results[index];if(!row)return;
+    const known=new Set(detailGroups.flatMap(([, ,fields])=>fields)),extra=result.columns.filter(k=>!known.has(k));
+    const section=group=>detailSection(row,...group);
+    const dialog=q('#tci-detail');
+    dialog.innerHTML=`<header class="tci-detail-header"><h3>READ-ONLY UNIT DETAIL</h3><button class="button" id="tci-close" type="button">CLOSE</button></header><div class="tci-detail-grid"><div class="tci-detail-column">${detailGroups.slice(0,2).map(section).join('')}${extra.length?detailSection(row,'additional','ADDITIONAL DETAILS',extra):''}</div><div class="tci-detail-column">${detailGroups.slice(2).map(section).join('')}</div></div>`;
+    dialog.showModal();q('#tci-close').onclick=()=>dialog.close();
+  }
   function lock(value){busy=value;ctx.root.querySelectorAll('input,select,button').forEach(el=>{el.disabled=value;});if(!value&&result)q('#tci-results').innerHTML=resultHtml(result);}
   async function search(body={},page=1){if(busy)return;activeQuery={...body};const run=++revision;result=null;q('#tci-results').innerHTML='';lock(true);q('#tci-message').textContent='Loading inventory...';
     try{const response=await window.MkiteApiClient.post(endpoint,{...body,page});if(!ctx||run!==revision)return;if(!response.ok)throw Error(response.error?.message||'Unable to load TINECO TOC inventory.');result=response.data;
@@ -23,11 +54,23 @@
     }catch(e){if(ctx&&run===revision)q('#tci-message').textContent=`Unable to load TINECO TOC inventory. ${e.message}`;}
     finally{if(ctx&&run===revision)lock(false);}
   }
+  const stepLaborColumns=['PRE-QC LABOR MINUTES','REPAIR LABOR MINUTES','FINAL QC LABOR MINUTES'];
+  function stepLaborValues(raw) {
+    try {
+      const value=JSON.parse(raw);
+      if(!value||value.version!==1||Object.keys(value).sort().join(',')!=='finalQc,preQc,repair,version'||!['preQc','repair','finalQc'].every(k=>Number.isSafeInteger(value[k])&&value[k]>=0))return ['','',''];
+      return [value.preQc,value.repair,value.finalQc];
+    }catch{return ['','',''];}
+  }
   async function exportFiltered(){if(busy||!result)return;const run=revision;lock(true);q('#tci-message').textContent='Loading all filtered results for export...';
     try{const response=await window.MkiteApiClient.post(endpoint,{...activeQuery,export:true});if(!ctx||run!==revision)return;if(!response.ok)throw Error(response.error?.message||'Export failed.');const data=response.data;
       if(data.results.length!==data.pagination.totalMatched)throw Error('Incomplete export response. No workbook was exported.');
-      const book=window.XLSX.utils.book_new(),rows=data.results.map(r=>Object.fromEntries(data.columns.map(k=>[k,r[k]??''])));
-      window.XLSX.utils.book_append_sheet(book,window.XLSX.utils.json_to_sheet(rows,{header:data.columns}),'TINECO Inventory');
+      const headers=[...new Set([...data.columns,'LABOR MINUTES PER STEP',...stepLaborColumns])];
+      const book=window.XLSX.utils.book_new(),rows=data.results.map(r=>{
+        const raw=r.laborMinutesPerStep??r['LABOR MINUTES PER STEP']??'',values=stepLaborValues(raw);
+        return {...Object.fromEntries(data.columns.map(k=>[k,r[k]??''])),'LABOR MINUTES PER STEP':raw,...Object.fromEntries(stepLaborColumns.map((k,i)=>[k,values[i]]))};
+      });
+      window.XLSX.utils.book_append_sheet(book,window.XLSX.utils.json_to_sheet(rows,{header:headers}),'TINECO Inventory');
       const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
       window.XLSX.writeFile(book,`TINECO_TOC_BATCH_INVENTORY_${date}.xlsx`);q('#tci-message').textContent=`Exported all ${rows.length} filtered records.`;
     }catch(e){if(ctx&&run===revision)q('#tci-message').textContent=e.message;}

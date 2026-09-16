@@ -11,6 +11,8 @@
   let context = null;
   let state = emptySession();
   let operationBusy = false; let lifecycle = 0;
+  let locationLookup=null,locationScope=null;
+  const currentLocationScope=()=>state.pl?.pickingListRecordId||state.creationRequestId||state.file;
   let previewOpen = false;
   let scanModeOpen = false;
   let scanState = { type: "ready", scan: "", candidateIds: [] };
@@ -260,7 +262,7 @@
     document.getElementById("pas-prepare")?.addEventListener("click", prepareInventory);
     document.getElementById("pas-create-pl")?.addEventListener("click", createPickingList);
     document.getElementById("pas-export-exceptions")?.addEventListener("click", () => window.MkiteB044Picking.exportExceptions(state.prepared.exceptions));
-    document.getElementById("pas-print-a4")?.addEventListener("click", () => window.MkiteB044Picking.printA4(state.pl));
+    document.getElementById("pas-print-a4")?.addEventListener("click", () => window.MkiteB044Picking.printA4(state.pl, inventoryPrintSnapshot(state.pl)));
     document.getElementById("pas-file")?.addEventListener("change", handleFile);
     document.getElementById("pas-preview")?.addEventListener("click", renderPreview);
     document.getElementById("pas-print-all")?.addEventListener("click", printBatchWithDialog);
@@ -360,7 +362,7 @@
     return !isTerminalPickingList() && Boolean(state.pl?.pickingListRecordId || (state.creationRequestId && state.generationUncertain !== false));
   }
   function clearLocalSession() {
-    lifecycle += 1; adminRecoveryKey = ''; state = emptySession(); scanState = { type: 'ready', scan: '', candidateIds: [] };
+    lifecycle += 1; startLocationLookup(); adminRecoveryKey = ''; state = emptySession(); scanState = { type: 'ready', scan: '', candidateIds: [] };
     previewOpen = false; scanModeOpen = false; context.storage.remove(STORAGE_KEY); renderSetup();
   }
   function removeExcel() {
@@ -459,9 +461,42 @@
     scanState = { ...scanState, candidateIds: [item.id] };
     confirmCandidate(item);
   }
+  // The existing possible-parts parser also emits descriptive materials. Only its
+  // recognized code-shaped SKUs are inventory lookup inputs; do not infer new SKUs.
+  const locationSku=sku=>/^(?:CARTON-\d+-\d+-\d+|M\d+[A-Za-z0-9]*(?:[-*][A-Za-z0-9]+)+)$/i.test(sku);
+  function inventoryPrintSnapshot(pl){
+    const parts=window.MkitePickingParts?.aggregate((pl?.packages||[]).map(row=>window.MkitePickingParts.possible(row.commandRaw)))||[];
+    return Object.fromEntries(parts.filter(part=>locationSku(part.sku)).map(part=>{
+      const result=locationLookup?.get(part.sku);
+      if(!result||result.state==='loading')return [part.sku,{state:'loading'}];
+      if(result.state==='error')return [part.sku,{state:'error'}];
+      return [part.sku,{state:'ready',locations:result.locations.map(row=>({warehouseCode:row.warehouseCode,locationCode:row.locationCode,availableQuantity:row.availableQuantity}))}];
+    }));
+  }
+  function locationMarkup(sku){
+    const result=locationLookup?.get(sku);
+    if(!result||result.state==='loading')return '<p role="status">Looking up inventory location…</p>';
+    if(result.state==='error')return '<p role="status">Inventory location unavailable</p>';
+    if(!result.locations.length)return '<p role="status">No inventory location found</p>';
+    return `<table><thead><tr><th scope="col">WAREHOUSE</th><th scope="col">LOCATION</th><th scope="col">AVAILABLE</th></tr></thead><tbody>${result.locations.map(row=>`<tr><td>${esc(row.warehouseCode)}</td><td>${esc(row.locationCode)}</td><td>${row.availableQuantity===null?'—':esc(row.availableQuantity)}</td></tr>`).join('')}</tbody></table>`;
+  }
+  function startLocationLookup(){
+    locationLookup?.dispose();
+    locationScope=currentLocationScope();
+    locationLookup=window.MkiteInventoryLocations?.create({concurrency:4,warehouseCodes:['MKS66','TO20'],onChange(sku){
+      if(!context||locationScope!==currentLocationScope())return;
+      // Only update currently mounted SKU regions, never capture row indexes or
+      // redraw the workflow. A late result cannot overwrite input or PL state.
+      context.root.querySelectorAll('[data-pas-location-sku]').forEach(node=>{if(node.dataset.pasLocationSku===sku)node.innerHTML=locationMarkup(sku);});
+    }})||null;
+  }
   function possiblePartsMarkup(rows) {
+    if(locationScope!==currentLocationScope())startLocationLookup();
     const parts = window.MkitePickingParts?.aggregate(rows.map(r => window.MkitePickingParts.possible(r.commandRaw))) || [];
-    return parts.length ? `<section class="pas-parts-estimate"><h3>POSSIBLE PARTS</h3><p>Preparation estimate only. One suggestion per package mentioning the item; not confirmed usage.</p><div class="pas-parts-list">${parts.map(p => `<span>${esc(p.sku)} <strong>×${p.quantity}</strong></span>`).join('')}</div></section>` : '';
+    return parts.length ? `<section class="pas-parts-estimate"><h3>POSSIBLE PARTS</h3><p>Preparation estimate only. One suggestion per package mentioning the item; not confirmed usage.</p><div class="pas-parts-list">${parts.map(p => {
+      if(locationSku(p.sku))locationLookup?.ensure(p.sku);
+      return `<div class="pas-part-location"><span>${esc(p.sku)} <strong>×${p.quantity}</strong></span>${locationSku(p.sku)?`<p class="pas-inventory-heading">Inventory Location</p><div class="pas-inventory-location" data-pas-location-sku="${esc(p.sku)}" aria-live="polite">${locationMarkup(p.sku)}</div>`:''}</div>`;
+    }).join('')}</div></section>` : '';
   }
   function pendingParts() {
     const item = scanPackageById(state.pendingPackageId);
@@ -612,9 +647,9 @@
 
   const module = {
     render,
-    init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; restore(); renderSetup(); reconcilePickingList(); },
-    cleanup() { adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.body.classList.remove("pas-printing"); document.getElementById("pas-print-host")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
-    _test: { adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
+    init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; startLocationLookup(); restore(); renderSetup(); reconcilePickingList(); },
+    cleanup() { locationLookup?.dispose(); locationLookup=null; adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.body.classList.remove("pas-printing"); document.getElementById("pas-print-host")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
+    _test: { inventoryPrintSnapshot, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
   };
   window.MkiteClientToolModules["b044.put-away-scan"] = module;
 }(window, document));

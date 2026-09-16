@@ -2,6 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 function setup(saved=null) {
  const nodes=new Map();const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{innerHTML:'',value:'',textContent:'',focus(){},showModal(){this.open=true;},close(){this.open=false;},querySelector:node,querySelectorAll:()=>[],addEventListener(type,fn){this['on'+type]=fn;}});return nodes.get(selector);};
  let stored=saved;const calls=[];const window={crypto:{randomUUID:()=> 'visit-1234567890123456'},setInterval(){},clearInterval(){},confirm:()=>true,MkiteApiClient:{post:async(path,body)=>{calls.push({path,body});if(path.endsWith('/begin'))return {ok:true,data:{requestId:body.requestId,sn:body.sn,unitId:'TCU-20260908-0001',entry:1,phase:'draft',step:0,startedAt:Date.now(),data:{totalPartsUsed:'0'},repairLevels:['Level 1']}};return {ok:true,data:{...stored,pending:undefined,phase:path.endsWith('/cancel')?'cancelled':path.endsWith('/finish')?'saved':path.endsWith('/pause')?'paused':'draft',step:body.to??stored.step,data:body.data||stored.data,result:{sn:stored.sn,unitId:stored.unitId,entry:1,laborMinutes:1,pauseNote:body.pauseNote,repairResult:body.outcome}}};}}};
+ vm.runInNewContext(fs.readFileSync('js/services/inventory-location-lookup.js','utf8'),{window});
  vm.runInNewContext(fs.readFileSync('js/client-tools/tineco-toc/tineco-toc.js','utf8'),{window});
  const module=window.MkiteClientToolModules['tineco.toc'];const ctx={root:node('root'),warehouse:'MKS66',clientId:'TINECO-TOC',storage:{get:()=>stored,set:(_,v)=>stored=structuredClone(v),remove:()=>stored=null},toast:{show(){}},audio:{success(){}}};module.init(ctx);
  return {module,t:module._test,window,calls,node,ctx,get saved(){return stored;}};
@@ -258,4 +259,49 @@ test('missing disposal note unlocks the form for correction',async()=>{
  h.window.MkiteApiClient.post=async()=>({ok:false,error:{code:'DISPOSAL_NOTE_REQUIRED',message:'Write disposal details'}});
  h.t.finish('Client Confirmed Disposal');await flush();assert.equal(h.saved.pending,undefined);assert.equal(h.saved.step,2);
  assert.doesNotMatch(h.node('#tcu-app').innerHTML,/<fieldset disabled>/);assert.match(statusHtml(h),/Unable to Save Repair Data/);h.module.cleanup();
+});
+
+async function inventorySetup(){const h=setup();h.t.begin('SN');await flush();h.t.move(1);await flush();const normal=h.window.MkiteApiClient.post;h.lookups=[];h.releases=[];h.window.MkiteApiClient.post=(path,body)=>{if(path!=='/api/inventory/lookup')return normal(path,body);h.lookups.push(structuredClone(body));return new Promise((resolve,reject)=>h.releases.push({resolve,reject}));};return h;}
+const location=(locationCode,availableQuantity)=>({locationCode,availableQuantity,warehouseCode:'MKS66',inventoryQuantity:999});
+const lookupReply=(sku,locations)=>({ok:true,data:{ok:true,sku,total:locations.length,locations}});
+test('accepted SKU lookup uses shared helper, caches duplicate/inflight scans, preserves all locations and order',async()=>{
+ const h=await inventorySetup();h.t.addPart('  Part/A  ');h.t.addPart('Part/A');
+ assert.deepEqual(h.lookups,[{sku:'Part/A',warehouseCode:'MKS66'}]);assert.equal(h.saved.data.partUsedDetail,'Part/A\nPart/A');assert.match(h.t.inventoryHtml(),/Looking up inventory location/);assert.doesNotMatch(h.node('#tcu-app').innerHTML,/<fieldset disabled>/);
+ h.releases[0].resolve(lookupReply('Part/A',[location('Z-LAST',1),location('<A-FIRST>',0),location('NULL',null)]));await flush();
+ const html=h.t.inventoryHtml();assert.match(html,/Z-LAST<\/td><td>1/);assert.match(html,/&lt;A-FIRST&gt;<\/td><td>0/);assert.match(html,/NULL<\/td><td>—/);assert.ok(html.indexOf('Z-LAST')<html.indexOf('&lt;A-FIRST&gt;'));assert.doesNotMatch(html,/999|recommended|preferred|primary|best location/i);
+ h.t.addPart('Part/A');assert.equal(h.lookups.length,1);assert.equal(h.saved.data.totalPartsUsed,'3');assert.doesNotMatch(JSON.stringify(h.saved),/Z-LAST|availableQuantity|locations|inventoryCache/);h.module.cleanup();
+});
+test('empty and invalid parts do not lookup; two SKUs and removed parts remain isolated',async()=>{
+ const h=await inventorySetup();h.t.addPart(' ');h.t.addPart('A\nB');assert.equal(h.lookups.length,0);
+ h.t.addPart('A');h.t.addPart('B');assert.equal(h.lookups.length,2);h.t.removePart(0);
+ h.releases[0].resolve(lookupReply('A',[location('STALE-A',2)]));h.releases[1].resolve(lookupReply('B',[location('ONLY-B',7)]));await flush();
+ assert.doesNotMatch(h.t.inventoryHtml(),/STALE-A/);assert.match(h.t.inventoryHtml(),/B<\/h4>.*ONLY-B/);assert.equal(h.saved.data.partUsedDetail,'B');
+ h.t.addPart('A');assert.equal(h.lookups.length,2);assert.match(h.t.inventoryHtml(),/A<\/h4>.*STALE-A/);h.module.cleanup();
+});
+for(const failure of ['zero','error','reject','wrong-sku','cross-warehouse'])test(`advisory lookup ${failure} keeps parts and Pause payload unchanged`,async()=>{
+ const h=await inventorySetup();h.t.addPart('P');
+ if(failure==='reject')h.releases[0].reject(Error('private upstream secret'));
+ else h.releases[0].resolve(failure==='zero'?lookupReply('P',[]):failure==='wrong-sku'?lookupReply('OTHER',[location('WRONG',1)]):failure==='cross-warehouse'?lookupReply('P',[{...location('WRONG',1),warehouseCode:'OTHER'}]):{ok:false,error:{message:'private upstream secret'}});
+ await flush();assert.match(h.t.inventoryHtml(),failure==='zero'?/No inventory location found/:/Inventory location unavailable/);assert.doesNotMatch(h.t.inventoryHtml(),/secret|WRONG/);assert.equal(h.saved.data.partUsedDetail,'P');
+ const expected=structuredClone(h.saved.data);h.node('#tcu-pause-note').value='Break';h.node('#tcu-confirm-pause').onclick();await flush();const call=h.calls.at(-1);assert.equal(call.path,'/api/tineco-toc/pause');assert.deepEqual(structuredClone(call.body.data),expected);assert.equal(call.body.pauseNote,'Break');assert.equal(h.saved.phase,'paused');h.module.cleanup();
+});
+for(const outcome of ['Completed','Client Confirmed Disposal'])test(`pending lookup does not block transition or ${outcome}`,async()=>{
+ const h=await inventorySetup();h.t.addPart('P');h.t.getSession().data.repairLevel='Level 1';const expected=structuredClone(h.t.getSession().data),started=h.saved.startedAt;
+ h.t.move(2);await flush();assert.deepEqual(structuredClone(h.calls.at(-1).body.data),expected);assert.equal(h.saved.startedAt,started);h.t.getSession().data.finalQcNote='Client note';h.t.finish(outcome);await flush();assert.equal(h.saved.phase,'saved');assert.equal(h.calls.at(-1).body.outcome,outcome);assert.equal(h.calls.at(-1).body.data.partUsedDetail,'P');
+ const before=structuredClone(h.saved),html=h.node('#tcu-app').innerHTML;h.releases[0].resolve(lookupReply('P',[location('LATE',1)]));await flush();assert.deepEqual(h.saved,before);assert.equal(h.node('#tcu-app').innerHTML,html);h.module.cleanup();
+});
+test('lookup completion preserves typed part input and cleanup isolates previous mount',async()=>{
+ const h=await inventorySetup();h.t.addPart('P');h.node('#tcu-part-input').value='typing next part';h.releases[0].resolve(lookupReply('P',[location('ONE',1)]));await flush();assert.equal(h.node('#tcu-part-input').value,'typing next part');assert.match(h.node('#tcu-inventory-results').innerHTML,/ONE/);
+ h.t.addPart('Q');const release=h.releases[1];h.module.cleanup();h.module.init(h.ctx);assert.equal(h.t.inventoryHtml(),'');release.resolve(lookupReply('Q',[location('OLD-MOUNT',1)]));await flush();assert.equal(h.t.inventoryHtml(),'');h.module.cleanup();
+});
+test('advisory location tables use semantic headings and narrow-screen wrapping',()=>{
+ const css=fs.readFileSync('css/client-tools/tineco-toc.css','utf8'),js=fs.readFileSync('js/client-tools/tineco-toc/tineco-toc.js','utf8');assert.match(css,/\.tcu-inventory-part table \{[^}]*width:100%[^}]*min-width:0[^}]*table-layout:fixed/);assert.match(css,/\.tcu-inventory-part th,\.tcu-inventory-part td \{[^}]*overflow-wrap:anywhere/);assert.match(js,/scope="col">LOCATION/);assert.match(js,/scope="col">AVAILABLE/);assert.match(js,/id="tcu-inventory-results" aria-live="polite"/);
+});
+
+test('real shared API helper unwraps inventory endpoint top-level contract',async()=>{
+ const h=await inventorySetup();h.window.MkiteApiConfig={baseUrl:'http://127.0.0.1:8787'};h.window.fetch=async(url,init)=>{
+  assert.equal(url,'http://127.0.0.1:8787/api/inventory/lookup');assert.deepEqual(JSON.parse(init.body),{sku:'9FWPT011100',warehouseCode:'MKS66'});assert.deepEqual(Object.keys(init.headers),['Content-Type']);
+  return {ok:true,status:200,json:async()=>({ok:true,sku:'9FWPT011100',total:1,locations:[location('FROM-API',3)]})};
+ };
+ vm.runInNewContext(fs.readFileSync('js/services/api-client.js','utf8'),{window:h.window});h.t.addPart('9FWPT011100');await flush();assert.match(h.node('#tcu-inventory-results').innerHTML,/FROM-API<\/td><td>3/);h.module.cleanup();
 });

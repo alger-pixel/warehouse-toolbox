@@ -5,16 +5,36 @@
   const stepGuidance=['Inspect the machine and record the issue found.','Record parts used and continue repair work.','Perform final quality inspection and choose the outcome.'];
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let ctx,session=null,busy=false,error='',generation=0,timer,saveState='';
+  let inventoryCache=null;
   const persist=()=>ctx.storage.set(KEY,session);
   const minutes=()=>session?.startedAt?Math.max(1,Math.ceil(((session.pending?.action==='finish'?session.pending.submittedAt||Date.now():Date.now())-session.startedAt)/60000)):0;
   function render(){return '<div class="tcu-app" id="tcu-app"></div>';}
   function input(name,label,type='textarea') {const value=session.data?.[name]??'';return `<label>${label}${type==='textarea'?`<textarea data-field="${name}" rows="3">${esc(value)}</textarea>`:type==='select'&&session.repairLevels?.length?`<select data-field="${name}"><option value="">Choose level</option>${session.repairLevels.map(v=>`<option ${v===value?'selected':''}>${esc(v)}</option>`).join('')}</select>`:`<input data-field="${name}" type="${type==='select'?'text':type}" ${type==='number'?'min="0" step="1"':''} value="${esc(value)}">`}</label>`;}
   function parts(){return String(session?.data?.partUsedDetail||'').split(/\r?\n/).map(v=>v.trim()).filter(Boolean);}
   function visitData(){const items=parts();return {...session.data,partUsedDetail:items.join('\n'),totalPartsUsed:String(items.length)};}
-  function editParts(items){if(busy||session?.pending||session?.step!==1||session.phase!=='draft')return;session.data.partUsedDetail=items.join('\n');session.data.totalPartsUsed=String(items.length);persist();draw();ctx.root.querySelector('#tcu-part-input')?.focus();}
-  function addPart(value){const part=String(value||'').trim();if(!part)return;if(/[\r\n]/.test(part)){ctx.toast.show('Scan one part at a time.');return;}editParts([...parts(),part]);}
+  function editParts(items){if(busy||session?.pending||session?.step!==1||session.phase!=='draft')return;session.data.partUsedDetail=items.join('\n');session.data.totalPartsUsed=String(items.length);persist();draw();ctx.root.querySelector('#tcu-part-input')?.focus();return true;}
+  function addPart(value){const part=String(value||'').trim();if(!part)return;if(/[\r\n]/.test(part)){ctx.toast.show('Scan one part at a time.');return;}if(editParts([...parts(),part]))lookupPart(part);}
   function removePart(index){const items=parts();if(!Number.isInteger(index)||index<0||index>=items.length)return;items.splice(index,1);editParts(items);}
-  function partsPanel(){return `<section class="tcu-parts"><label for="tcu-part-input">PART USED DETAIL — scan one at a time</label><div class="tcu-part-entry"><input id="tcu-part-input" autocomplete="off" placeholder="Scan or enter part number"><button class="button" type="button" id="tcu-add-part">ADD PART</button></div><p class="tcu-part-total" role="status">TOTAL PARTS USED: <strong>${parts().length}</strong></p><ol class="tcu-part-list">${parts().map((part,i)=>`<li><span>${esc(part)}</span><button type="button" data-remove-part="${i}" aria-label="Remove part ${i+1}: ${esc(part)}">×</button></li>`).join('')}</ol>${parts().length?'':'<p class="tcu-muted">No parts added.</p>'}</section>`;}
+  function inventoryHtml(){
+    return [...new Set(parts())].filter(sku=>inventoryCache?.get(sku)).map(sku=>{
+      const result=inventoryCache.get(sku);
+      let content='<p role="status">Looking up inventory location…</p>';
+      if(result.state==='error')content='<p role="status">Inventory location unavailable</p>';
+      if(result.state==='ready')content=result.locations.length?`<table><thead><tr><th scope="col">LOCATION</th><th scope="col">AVAILABLE</th></tr></thead><tbody>${result.locations.map(row=>`<tr><td>${esc(row.locationCode)}</td><td>${typeof row.availableQuantity==='number'&&Number.isFinite(row.availableQuantity)?esc(row.availableQuantity):'—'}</td></tr>`).join('')}</tbody></table>`:'<p role="status">No inventory location found</p>';
+      return `<section class="tcu-inventory-part"><h4>${esc(sku)}</h4>${content}</section>`;
+    }).join('');
+  }
+  function refreshInventory(){
+    if(!ctx||session?.step!==1||session?.phase!=='draft')return;
+    const region=ctx.root.querySelector('#tcu-inventory-results');
+    if(region)region.innerHTML=inventoryHtml();
+  }
+  function resetInventory(){
+    inventoryCache?.dispose();
+    inventoryCache=window.MkiteInventoryLocations.create({onChange:refreshInventory});
+  }
+  function lookupPart(sku){inventoryCache.ensure(sku);refreshInventory();}
+  function partsPanel(){return `<section class="tcu-parts"><label for="tcu-part-input">PART USED DETAIL — scan one at a time</label><div class="tcu-part-entry"><input id="tcu-part-input" autocomplete="off" placeholder="Scan or enter part number"><button class="button" type="button" id="tcu-add-part">ADD PART</button></div><p class="tcu-part-total" role="status">TOTAL PARTS USED: <strong>${parts().length}</strong></p><ol class="tcu-part-list">${parts().map((part,i)=>`<li><span>${esc(part)}</span><button type="button" data-remove-part="${i}" aria-label="Remove part ${i+1}: ${esc(part)}">×</button></li>`).join('')}</ol>${parts().length?'':'<p class="tcu-muted">No parts added.</p>'}<div class="tcu-inventory"><h4>Inventory Location</h4><div id="tcu-inventory-results" aria-live="polite">${inventoryHtml()}</div></div></section>`;}
   // Presentation only: lookup and save status use the existing visit and pending request.
   function statusPanel(){
     let state='idle',title='Ready for SN',message='Scan or enter a machine serial number to begin.',summary=[];
@@ -98,10 +118,10 @@
       if(['PAUSE_NOTE_REQUIRED','ISSUE_FOUND_REQUIRED','INVALID_FORM','PAYLOAD_TOO_LARGE','SN_REQUIRED','SN_INVALID','INVALID_PART_QUANTITY','PART_DETAIL_REQUIRED','REPAIR_LEVEL_REQUIRED','FINAL_QC_FAILURE_REASON_REQUIRED','DISPOSAL_NOTE_REQUIRED','REPAIR_RESULT_OPTION_NOT_AVAILABLE','FINAL_QC_RESULT_OPTION_NOT_AVAILABLE','REPAIR_LEVEL_OPTION_NOT_AVAILABLE','TINECO_TOC_SCHEMA_INVALID','TINECO_TOC_TABLE_NOT_CONFIGURED'].includes(e.code)){if(action!=='begin'){delete session.pending;persist();}}
     }}finally{if(ctx&&generation===gen){busy=false;draw();}}
   }
-  function begin(sn){if(busy||session)return;sn=String(sn||'').trim();if(!sn){error='SN_REQUIRED: Scan or enter the serial number.';draw();return;}session={requestId:window.crypto.randomUUID(),sn,data:{totalPartsUsed:'0'},phase:'starting',step:0};run('begin',{requestId:session.requestId,sn});}
+  function begin(sn){if(busy||session)return;sn=String(sn||'').trim();if(!sn){error='SN_REQUIRED: Scan or enter the serial number.';draw();return;}resetInventory();session={requestId:window.crypto.randomUUID(),sn,data:{totalPartsUsed:'0'},phase:'starting',step:0};run('begin',{requestId:session.requestId,sn});}
   function move(to){if(!session||session.pending||busy||Math.abs(to-session.step)!==1||to<0||to>2)return;run('step',{requestId:session.requestId,from:session.step,to,data:visitData()});}
   function finish(outcome){if(!session||session.pending||busy)return;run('finish',{requestId:session.requestId,outcome,data:visitData()});}
-  function init(context){ctx=context;generation++;busy=false;error='';saveState='';session=ctx.storage.get(KEY,null);if(session?.phase==='cancelled')session=null;draw();timer=window.setInterval(()=>{const el=ctx?.root.querySelector('#tcu-timer');if(el)el.textContent=minutes();const total=ctx?.root.querySelector('#tcu-total-labor');if(total)total.textContent=(session?.previousLaborMinutes||0)+minutes();},1000);if(session?.pending?.action==='begin')run('begin',session.pending.body);else if(['finish','pause'].includes(session?.pending?.action))run(session.pending.action,session.pending.body,true);}
+  function init(context){ctx=context;generation++;resetInventory();busy=false;error='';saveState='';session=ctx.storage.get(KEY,null);if(session?.phase==='cancelled')session=null;draw();timer=window.setInterval(()=>{const el=ctx?.root.querySelector('#tcu-timer');if(el)el.textContent=minutes();const total=ctx?.root.querySelector('#tcu-total-labor');if(total)total.textContent=(session?.previousLaborMinutes||0)+minutes();},1000);if(session?.pending?.action==='begin')run('begin',session.pending.body);else if(['finish','pause'].includes(session?.pending?.action))run(session.pending.action,session.pending.body,true);}
   window.MkiteClientToolModules=window.MkiteClientToolModules||{};
-  window.MkiteClientToolModules['tineco.toc']={render,init,cleanup(){generation++;window.clearInterval(timer);ctx=null;busy=false;},_test:{begin,move,finish,run,minutes,addPart,removePart,getSession:()=>session,KEY}};
+  window.MkiteClientToolModules['tineco.toc']={render,init,cleanup(){generation++;inventoryCache?.dispose();inventoryCache=null;window.clearInterval(timer);ctx=null;busy=false;},_test:{inventoryHtml,begin,move,finish,run,minutes,addPart,removePart,getSession:()=>session,KEY}};
 }(window));

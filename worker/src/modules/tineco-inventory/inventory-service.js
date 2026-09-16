@@ -1,7 +1,8 @@
 import { json, errorResponse } from '../../utils/response.js';
 export const EXPORT_LIMIT = 5000;
-export const COLUMNS = ['UNIT ID','SN','TRACKING NUMBER','CLIENT ID','WAREHOUSE','REPAIR DATE','TIMES OF RE-ENTER','CURRENT STEP','ISSUE FOUND','PRE-QC NOTE','PART USED DETAIL','TOTAL PARTS USED','LABOR MINUTES','REPAIR LEVEL','REPAIR RESULT','FINAL QC RESULT','FINAL QC NOTE','CLIENT STATUS'];
+export const COLUMNS = ['UNIT ID','SN','TRACKING NUMBER','CLIENT ID','WAREHOUSE','REPAIR DATE','TIMES OF RE-ENTER','CURRENT STEP','ISSUE FOUND','PRE-QC NOTE','PART USED DETAIL','TOTAL PARTS USED','LABOR MINUTES','LABOR MINUTES PER STEP','REPAIR LEVEL','REPAIR RESULT','FINAL QC RESULT','FINAL QC NOTE','CLIENT STATUS'];
 const text = v => Array.isArray(v) ? v.map(x => x.text || '').join('') : String(v ?? '').trim();
+const rawText = v => Array.isArray(v) ? v.map(x => x.text || '').join('') : String(v ?? '');
 const norm = v => text(v).toLocaleUpperCase();
 class SearchError extends Error {}
 function dateKey(v, timeZone) {
@@ -23,7 +24,7 @@ export function createTinecoInventoryService(config, records) {
     const args={appToken:config.appToken,tableId:config.tinecoTocUnitTableId};
     // The shared record service pages Feishu on the Worker; ordinary responses contain only 50 rows.
     const [raw,schema]=await Promise.all([records.listRecords(args),records.listFields(args)]);
-    const inventory=raw.map(r=>({recordId:r.record_id,...Object.fromEntries(COLUMNS.map(k=>[k,k==='REPAIR DATE'?dateKey(r.fields?.[k],config.warehouseTimeZone||'America/Toronto'):text(r.fields?.[k])]))}));
+    const inventory=raw.map(r=>({recordId:r.record_id,laborMinutesPerStep:rawText(r.fields?.['LABOR MINUTES PER STEP']),...Object.fromEntries(COLUMNS.map(k=>[k,k==='LABOR MINUTES PER STEP'?rawText(r.fields?.[k]):k==='REPAIR DATE'?dateKey(r.fields?.[k],config.warehouseTimeZone||'America/Toronto'):text(r.fields?.[k])]))}));
     const options={};for(const field of ['REPAIR LEVEL','REPAIR RESULT','CLIENT STATUS'])options[field]=[...new Set([...(schema.find(f=>f.field_name===field)?.property?.options||[]).map(o=>o.name),...inventory.map(r=>r[field])].filter(Boolean))].sort();
     const base=inventory.filter(r=>(!query.repairLevel||r['REPAIR LEVEL']===query.repairLevel)&&(!query.repairResult||r['REPAIR RESULT']===query.repairResult)&&(!query.clientStatus||r['CLIENT STATUS']===query.clientStatus)&&(!query.repairFrom||(r['REPAIR DATE']&&r['REPAIR DATE']>=query.repairFrom))&&(!query.repairTo||(r['REPAIR DATE']&&r['REPAIR DATE']<=query.repairTo)));
     // Resolve each identifier's exact priority against the same non-identifier filtered set,
