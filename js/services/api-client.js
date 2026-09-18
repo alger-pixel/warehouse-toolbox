@@ -22,6 +22,8 @@
       const baseUrl = path.startsWith("/api/users/") && config.userManagementBaseUrl
         ? config.userManagementBaseUrl : config.baseUrl;
       if (!baseUrl) return { ok: false, error: { code: "API_NOT_CONFIGURED", message: "The secure MKITE API endpoint is not configured.", retryable: false } };
+      try { window.MkiteApiEnvironment?.assertSafeApiBase(window.location?.hostname, baseUrl); }
+      catch { return { ok: false, error: { code: "API_CONFIGURATION_ERROR", message: "Production API configuration is invalid.", retryable: false } }; }
       try {
         const response = await window.fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
           method: "POST",
@@ -33,7 +35,8 @@
         if (!response.ok || !payload || payload.ok === false) return normalizeFailure(response, payload);
         return { ok: true, data: payload.data || payload };
       } catch (error) {
-        return { ok: false, error: { code: "CONNECTION_ERROR", message: "The secure MKITE API could not be reached.", retryable: true } };
+        const local=window.MkiteApiEnvironment?.isLocalHostname(window.location?.hostname)&&/(?:localhost|127\.0\.0\.1)/i.test(baseUrl);
+        return { ok: false, error: { code: "CONNECTION_ERROR", message: local ? "Local Worker is not running on port 8787." : "The secure MKITE API could not be reached.", retryable: true } };
       }
     }
   };

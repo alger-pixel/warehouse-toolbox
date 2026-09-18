@@ -57,6 +57,22 @@ test('parts copy controls retain the responsive table wrapper without page overf
  const h=fixture(),html=h.tool._test.detailHtml(h.data.results[0]),css=fs.readFileSync('css/in-house-tools/batch-picking-list.css','utf8');
  assert.match(html,/inventory-table bpl-parts-table/);assert.match(css,/\.bpl-app[^}]*min-width:0/);assert.match(css,/\.bpl-parts-table td:first-child[^}]*overflow-wrap:anywhere/);assert.ok(css.includes('@media(max-width:540px)'));assert.match(css,/\.bpl-parts-heading \{ align-items:flex-start; flex-direction:column; \}/);
 });
+test('completion timestamps render in Toronto time without mutating raw detail data',()=>{
+ const h=fixture(),format=h.tool._test.formatTorontoDateTime;
+ assert.equal(format('2026-09-18T14:29:22.285Z'),'2026-09-18 10:29');
+ assert.equal(format('2026-01-15T14:29:22.285Z'),'2026-01-15 09:29');
+ assert.equal(format('2026-03-08T06:30:00.000Z'),'2026-03-08 01:30');
+ assert.equal(format('2026-03-08T07:30:00.000Z'),'2026-03-08 03:30');
+ for(const blank of ['',null,undefined,'   '])assert.equal(format(blank),'—');
+ assert.equal(format('<invalid>'),'&lt;invalid&gt;');
+ const row=h.data.results[0],raw='2026-09-18T14:29:22.285Z';row.packages[0].completedAt=raw;const before=structuredClone(row);
+ const html=h.tool._test.detailHtml(row);assert.match(html,/<th>Completion<\/th>/);assert.match(html,/<td class="bpl-completion">2026-09-18 10:29<\/td>/);assert.doesNotMatch(html,/2026-09-18T14:29:22\.285Z/);assert.deepEqual(row,before);
+ row.packages[0].completedAt='<img src=x onerror="bad()">';assert.match(h.tool._test.detailHtml(row),/&lt;img src=x onerror=&quot;bad\(\)&quot;&gt;/);assert.doesNotMatch(h.tool._test.detailHtml(row),/<img/);
+});
+test('PACKAGE DETAIL export keeps the raw completion timestamp',()=>{
+ const h=fixture(),raw='2026-09-18T14:29:22.285Z';h.data.results[0].packages[0].completedAt=raw;
+ const book=h.tool._test.workbook(h.data),rows=XLSX.utils.sheet_to_json(book.Sheets['PACKAGE DETAIL']);assert.equal(rows[0].Completion,raw);
+});
 
 for(const [raw,table,detail] of [['COMPLETED | 18 MIN','18 min','18 min'],['CANCELLED | 7 MIN','7 min<br>Cancelled','7 min (Cancelled)'],['','—','—'],[null,'—','—'],[undefined,'—','—'],['<img src=x onerror="bad()">','&lt;img src=x onerror=&quot;bad()&quot;&gt;','&lt;img src=x onerror=&quot;bad()&quot;&gt;']]) test(`process time table and detail render safely: ${raw}`,()=>{
  const h=fixture();h.data.results[0].processTime=raw;

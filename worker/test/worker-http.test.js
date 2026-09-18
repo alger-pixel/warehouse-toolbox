@@ -29,7 +29,7 @@ test('B044 endpoints enforce POST, preserve localhost CORS and forward mutations
 test("health is safe and CORS is exact-origin", async () => {
   for (const origin of ALLOWED_ORIGINS) {
     const allowed = await handleRequest(new Request("https://api.example/api/health", { headers: { Origin: origin } }), env);
-    assert.equal(allowed.status, 200); assert.equal(allowed.headers.get("Access-Control-Allow-Origin"), origin); assert.notEqual(allowed.headers.get("Access-Control-Allow-Origin"), "*"); assert.equal((await allowed.json()).feishuConfigured, false);
+    assert.equal(allowed.status, 200); assert.equal(allowed.headers.get("Access-Control-Allow-Origin"), origin); assert.notEqual(allowed.headers.get("Access-Control-Allow-Origin"), "*"); assert.deepEqual(await allowed.json(), { ok:true, service:'mkite-secure-api' });
   }
   for (const origin of ["http://127.0.0.1:9999", "https://example.com"]) {
     const denied = await handleRequest(new Request("https://api.example/api/health", { headers: { Origin: origin } }), env);

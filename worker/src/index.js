@@ -10,7 +10,7 @@ import { createInventoryService } from './modules/inventory/inventory-service.js
 import { createInventoryController } from './modules/inventory/inventory-controller.js';
 import { handleB044 } from "./modules/b044-put-away/put-away-controller.js";
 export { B044PutAwayCoordinator } from "./modules/b044-put-away/put-away-coordinator.js";
-import { getFeishuConfig, isFeishuConfigured } from "./config/feishu-config.js";
+import { getFeishuConfig } from "./config/feishu-config.js";
 import { createFeishuAuthService, FeishuAuthError } from "./services/feishu-auth-service.js";
 import { createFeishuRecordService, FeishuRecordError } from "./services/feishu-record-service.js";
 import { createReceivingDomainService } from "./modules/receiving/receiving-service.js";
@@ -40,7 +40,7 @@ export async function handleRequest(request, env) {
   if (origin && !allowedOrigins(env).has(origin)) return errorResponse(403, "CORS_DENIED", "Origin is not allowed.", false, id, request, env);
   if (route === "not-found") return errorResponse(404, "NOT_FOUND", "Route not found.", false, id, request, env);
   if (!methodAllowed(route, request.method)) return errorResponse(405, "METHOD_NOT_ALLOWED", "Method not allowed.", false, id, request, env);
-  if (route === "health") return json({ ok: true, service: "mkite-api", version: "0.1", feishuConfigured: isFeishuConfigured(env) }, 200, request, env);
+  if (route === "health") return json({ ok: true, service: "mkite-secure-api" }, 200, request, env);
   const parsed = await readJson(request, route.startsWith("b044-") ? 1024 * 1024 : MAX_BODY_BYTES);
   if (parsed.tooLarge) return errorResponse(413, "PAYLOAD_TOO_LARGE", "Request body is too large.", false, id, request, env);
   if (parsed.invalid) return errorResponse(400, "INVALID_JSON", "Request body must be valid JSON.", false, id, request, env);

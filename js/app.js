@@ -208,9 +208,10 @@
 
   function renderSettings() {
     const settings = getSettings();
+    const api=window.MkiteApiConfig, apiHost=(()=>{try{return new URL(api.baseUrl).host;}catch{return 'Invalid configuration';}})();
     mainContent.innerHTML = `${pageHeader("Settings", "Application preferences and information.")}
       <div class="workspace-stack"><section class="panel"><h3>User Management</h3><p>Manage user accounts and warehouse, client and tool assignments.</p><button class="button button-primary" type="button" data-route="settings/users">USER MANAGEMENT</button></section><section class="panel"><div class="panel-header"><div><h3>Appearance</h3><p>Preferences are stored in this browser.</p></div></div><div class="form-control"><label for="settings-theme">Theme</label><select class="select" id="settings-theme"><option value="dark"${settings.theme === "dark" ? " selected" : ""}>Dark</option><option value="light"${settings.theme === "light" ? " selected" : ""}>Light</option></select></div></section>
-      <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">Receiving Live Integration v0.3</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p></section></div>`;
+      <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">Receiving Live Integration v0.3</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p><p class="api-environment"><strong>API: ${escapeHtml(api.environment)}</strong><br><span>${escapeHtml(apiHost)}</span></p></section></div>`;
     document.getElementById("settings-theme").addEventListener("change", (event) => setTheme(event.target.value));
   }
 

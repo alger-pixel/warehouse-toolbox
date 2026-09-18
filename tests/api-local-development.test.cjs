@@ -27,22 +27,28 @@ test('production and other origins never opt into the local Worker',async()=>{
     const {window,calls}=setup(origin);await window.MkiteApiClient.post('/api/users/list',{});assert.equal(calls[0].url,`${production}/api/users/list`);
   }
 });
-test('API client reads current configuration even when its object has been captured',async()=>{
+test('production guard blocks a captured client from using a localhost API override',async()=>{
   const {window,calls}=setup('https://alger-pixel.github.io');const captured=window.MkiteApiClient;
   await captured.post('/api/users/list',{});
   window.MkiteApiConfig=Object.freeze({...window.MkiteApiConfig,baseUrl:'http://127.0.0.1:8787'});
-  await captured.post('/api/users/list',{});
-  assert.equal(calls[0].url,`${production}/api/users/list`);assert.equal(calls[1].url,'http://127.0.0.1:8787/api/users/list');
+  const response=await captured.post('/api/users/list',{});
+  assert.equal(calls[0].url,`${production}/api/users/list`);assert.equal(calls.length,1);assert.equal(response.ok,false);assert.equal(response.error.code,'API_CONFIGURATION_ERROR');assert.equal(response.error.message,'Production API configuration is invalid.');
 });
 test('local failure never retries against production',async()=>{
   const {window,calls}=setup('http://localhost:5501');window.fetch=async url=>{calls.push({url});throw new Error('offline');};
-  const response=await window.MkiteApiClient.post('/api/users/list',{});assert.equal(response.ok,false);assert.equal(calls.length,1);assert.equal(calls[0].url,'http://127.0.0.1:8787/api/users/list');
+  const response=await window.MkiteApiClient.post('/api/users/list',{});assert.equal(response.ok,false);assert.equal(response.error.message,'Local Worker is not running on port 8787.');assert.equal(calls.length,1);assert.equal(calls[0].url,'http://127.0.0.1:8787/api/users/list');
 });
 test('HTML versions config and client scripts together',()=>{
-  const html=fs.readFileSync('index.html','utf8');for(const file of ['api-config','api-client'])assert.ok(html.includes(`${file}.js?v=shared-local-api-2`));
+  const html=fs.readFileSync('index.html','utf8');for(const file of ['api-config','api-client'])assert.ok(html.includes(`${file}.js?v=api-environment-guard-1`));
 });
 
 for(const origin of ['http://localhost:5502','https://localhost:5501','http://127.0.0.1:9000'])test(`hostname determines local base: ${origin}`,()=>{assert.equal(setup(origin).window.MkiteApiConfig.baseUrl,'http://127.0.0.1:8787');});
+test('shared resolver identifies environments and rejects local bases on production hosts',()=>{
+ const local=setup('http://localhost:5501').window,loopback=setup('http://127.0.0.1:5501').window,prod=setup('https://alger-pixel.github.io').window;
+ assert.equal(local.MkiteApiEnvironment.resolveApiBase('localhost'),'http://127.0.0.1:8787');assert.equal(loopback.MkiteApiConfig.environment,'LOCAL');assert.equal(prod.MkiteApiEnvironment.resolveApiBase('alger-pixel.github.io'),production);assert.equal(prod.MkiteApiConfig.environment,'PRODUCTION');
+ assert.throws(()=>prod.MkiteApiEnvironment.assertSafeApiBase('alger-pixel.github.io','http://localhost:8787'),/Production API configuration is invalid/);
+});
+test('Settings exposes only the compact shared API environment indicator',()=>{const source=fs.readFileSync('js/app.js','utf8');assert.match(source,/API: \$\{escapeHtml\(api\.environment\)\}/);assert.match(source,/new URL\(api\.baseUrl\)\.host/);assert.doesNotMatch(source,/MKITE_WAREHOUSE_API_KEY|X-API-Key/);});
 test('inventory helper sends through shared config on local and production hosts',async()=>{
  for(const origin of ['http://localhost:5501','http://127.0.0.1:5501','https://alger-pixel.github.io']){
   const {window,calls}=setup(origin);window.fetch=async(url,init)=>{calls.push({url,init});return {ok:true,json:async()=>({ok:true,sku:'P',total:0,locations:[]})};};
