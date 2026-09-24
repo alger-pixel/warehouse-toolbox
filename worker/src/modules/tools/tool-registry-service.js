@@ -1,6 +1,7 @@
 import '../../../../js/client-tools-registry.js';
 import '../../../../js/in-house-tools-registry.js';
-const registry = { all: () => [...globalThis.MkiteClientToolRegistry.all(), ...globalThis.MkiteInHouseToolRegistry.all().filter(tool => tool.toolId)] };
+import '../../../../js/tools-registry.js';
+const registry = { all: () => [...globalThis.MkiteClientToolRegistry.all(), ...globalThis.MkiteInHouseToolRegistry.all().filter(tool => tool.toolId), ...globalThis.MkiteToolRegistry.all().filter(tool => tool.toolId)] };
 const text = value => Array.isArray(value) ? value.map(v => v.text || '').join('') : String(value ?? '');
 export function createToolRegistryService(config, records, source = registry) {
   let syncing = false;

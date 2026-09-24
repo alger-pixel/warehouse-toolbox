@@ -9,7 +9,7 @@ const env = { ALLOWED_ORIGINS: ALLOWED_ORIGINS.join(",") };
 
 test('B044 endpoints enforce POST, preserve localhost CORS and forward mutations to coordinator', async () => {
   const configured = { ...env, FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret', FEISHU_BASE_APP_TOKEN: 'base', FEISHU_PACKAGE_TABLE_ID: 'packages', FEISHU_CLIENT_TABLE_ID: 'clients', FEISHU_PICKING_LIST_TABLE_ID: 'lists' };
-  for (const endpoint of ['prepare', 'create-picking-list', 'complete-package', 'cancel-picking-list']) {
+  for (const endpoint of ['prepare', 'create-picking-list', 'start-process', 'complete-package', 'cancel-picking-list']) {
     const url = `https://api.example/api/b044/put-away/${endpoint}`;
     assert.equal((await handleRequest(new Request(url), env)).status, 405);
     const headers = { Origin: 'http://localhost:5501', 'Content-Type': 'application/json' };
@@ -44,6 +44,29 @@ test("preflight and method boundaries are enforced", async () => {
   }
   const wrongMethod = await handleRequest(new Request("https://api.example/api/receiving", { method: "GET" }), env);
   assert.equal(wrongMethod.status, 405);
+});
+
+test("Safety Icon routes enforce their read/create/update method boundaries", async () => {
+  const origin={Origin:"http://localhost:5501","Content-Type":"application/json"};
+  assert.equal((await handleRequest(new Request("https://api.example/api/safety-icons",{method:"PATCH",headers:origin,body:"{}"}),env)).status,405);
+  assert.equal((await handleRequest(new Request("https://api.example/api/safety-icons/rec1",{method:"POST",headers:origin,body:"{}"}),env)).status,405);
+  assert.equal((await handleRequest(new Request("https://api.example/api/safety-icons/image/rec1",{method:"PATCH",headers:origin,body:"{}"}),env)).status,405);
+  for(const localOrigin of ['http://localhost:5501','http://127.0.0.1:5501']){
+    for(const path of ['/api/safety-icons','/api/safety-icons/rec1','/api/safety-icons/image/rec1']){
+      const response=await handleRequest(new Request(`https://api.example${path}`,{method:"OPTIONS",headers:{Origin:localOrigin,'Access-Control-Request-Method':path.includes('/image/')?'GET':'PATCH'}}),env);
+      assert.equal(response.status,204);assert.equal(response.headers.get('Access-Control-Allow-Origin'),localOrigin);assert.match(response.headers.get('Access-Control-Allow-Methods'),/PATCH/);
+    }
+  }
+  const denied=await handleRequest(new Request('https://api.example/api/safety-icons',{method:'OPTIONS',headers:{Origin:'https://untrusted.example'}}),env);
+  assert.equal(denied.status,403);assert.equal(denied.headers.get('Access-Control-Allow-Origin'),null);
+});
+
+test('SOP routes expose create/list/load/save/delete/assets with trusted-origin preflight boundaries',async()=>{
+ const allowed={Origin:'http://localhost:5501','Content-Type':'application/json'};
+ for(const [path,method] of [['/api/sops','PATCH'],['/api/sops/SOP-1','POST'],['/api/sops/SOP-1/excel','GET'],['/api/sops/SOP-1/assets/a1','PUT']])assert.equal((await handleRequest(new Request(`https://api.example${path}`,{method,headers:allowed,...(method==='GET'?{}:{body:'{}'})}),env)).status,405);
+ for(const path of ['/api/sops','/api/sops/SOP-1','/api/sops/SOP-1/excel','/api/sops/SOP-1/assets/a1']){const response=await handleRequest(new Request(`https://api.example${path}`,{method:'OPTIONS',headers:{Origin:'http://127.0.0.1:5501','Access-Control-Request-Method':'POST'}}),env);assert.equal(response.status,204);assert.match(response.headers.get('Access-Control-Allow-Methods'),/POST/);}
+ const unavailable=await handleRequest(new Request('https://api.example/api/sops',{method:'POST',headers:allowed,body:'{}'}),env);assert.equal(unavailable.status,503);assert.equal((await unavailable.json()).error.code,'SOP_COORDINATOR_NOT_CONFIGURED');
+ const denied=await handleRequest(new Request('https://api.example/api/sops',{method:'POST',headers:{Origin:'https://bad.example','Content-Type':'application/json'},body:'{}'}),env);assert.equal(denied.status,403);
 });
 
 test("temporary Receiving fields diagnostic route no longer exists", async () => {

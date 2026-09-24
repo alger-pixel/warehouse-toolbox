@@ -56,3 +56,5 @@ test("record retrieval and update target one record and preserve supplied field 
   await service.getRecord({appToken:"base",tableId:"table",recordId:"rec-one"});await service.updateRecord({appToken:"base",tableId:"table",recordId:"rec-one",fields});
   assert.match(calls[0].url,/\/records\/rec-one$/);assert.equal(calls[0].init.method,"GET");assert.equal(calls[1].init.method,"PUT");assert.deepEqual(JSON.parse(calls[1].init.body),{fields});
 });
+
+test("record deletion targets exactly one record",async()=>{let captured;const service=createFeishuRecordService(auth,{fetchImpl:async(url,init)=>{captured={url,init};return Response.json({code:0,data:{}});}});assert.deepEqual(await service.deleteRecord({appToken:'base',tableId:'table',recordId:'rec-one'}),{recordId:'rec-one'});assert.match(captured.url,/\/records\/rec-one$/);assert.equal(captured.init.method,'DELETE');assert.equal(captured.init.body,undefined);});

@@ -65,6 +65,11 @@ export function createFeishuRecordService(authService, options = {}) {
       const url = `${API_ROOT}/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`;
       const data = await request(url, { method: "PUT", body: JSON.stringify({ fields }) }, "record update");
       return data.record || {};
+    },
+    async deleteRecord({ appToken, tableId, recordId }) {
+      const url = `${API_ROOT}/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`;
+      await request(url, { method: "DELETE" }, "record deletion");
+      return { recordId };
     }
   };
 }

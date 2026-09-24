@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 
 function setup(operational = true) {
-  const nodes = new Map(), calls = [], notices = [];
+  const nodes = new Map(), calls = [], starts = [], notices = [];
   const node = id => {
     if (!nodes.has(id)) nodes.set(id, { innerHTML: '', value: '', addEventListener() {}, focus() {}, remove() {} });
     return nodes.get(id);
@@ -13,7 +13,7 @@ function setup(operational = true) {
   const row = { id: 'row-2', trackingNumber: 'TRACK1', normalizedTracking: 'TRACK1', finalSku: 'B044-001', packageRecordId: 'rec1', printCount: 0, printStatus: 'NOT PRINTED' };
   let saved = { file: { name: 'test.xlsx' }, packages: [row], invalidRows: [], pl: { operational, pickingListNumber: 'B044-PL-20260907-0001', pickingListRecordId: 'pl1', packages: [row], succeeded: ['rec1'], failed: [] } };
   const root = { innerHTML: '', querySelectorAll: () => [] };
-  const window = { setTimeout() {}, MkiteB044Picking: { async complete(input) { calls.push(input); return { partsPersisted: true, status: 'Processed', completedAt: '2026-09-07T12:00:00Z', pickingListComplete: true }; } } };
+  const window = { setTimeout() {}, MkiteB044Picking: { async startProcess(input) { starts.push(input); return { processStartedAt:'2026-09-07T11:50:00Z' }; }, async complete(input) { calls.push(input); return { partsPersisted: true, status: 'Processed', completedAt: '2026-09-07T12:00:00Z', pickingListComplete: true }; } } };
   vm.runInNewContext(fs.readFileSync('js/services/package-identifier-matcher.js', 'utf8'), { window });
   vm.runInNewContext(fs.readFileSync('js/shared/picking-parts.js', 'utf8'), { window });
   vm.runInNewContext(fs.readFileSync('js/services/inventory-location-lookup.js', 'utf8'), { window });
@@ -21,7 +21,7 @@ function setup(operational = true) {
   const module = window.MkiteClientToolModules['b044.put-away-scan'];
   const context = { root, storage: { get: () => structuredClone(saved), set: (_, value) => { saved = structuredClone(value); }, remove: () => { saved = null; } }, audio: { setEnabled() {}, success() {}, failure() {}, warning() {} }, toast: { show: message => notices.push(message) } };
   module.init(context);
-  return { tool: module._test, module, context, calls, window, root, notices };
+  return { tool: module._test, module, context, calls, starts, window, root, notices };
 }
 
 test('Scan & Print requires an operational persisted PL', async () => {
@@ -34,7 +34,7 @@ test('Scan & Print requires an operational persisted PL', async () => {
 test('printing, reprinting and wrong confirmation never complete a package; correct physical label does', async () => {
   const h = setup(); h.tool.openScanMode(); await h.tool.processScan('TRACK1');
   const row = h.tool.currentQueue()[0];
-  assert.equal(row.printCount, 1); assert.equal(h.calls.length, 0);
+  assert.equal(row.printCount, 1); assert.equal(h.calls.length, 0);assert.equal(h.starts.length,1);assert.equal(h.starts[0].packageRecordId,'rec1');
   assert.equal(h.tool.getState().pendingPackageId, row.id);
   assert.match(h.root.innerHTML, /WAITING FOR PRINT CONFIRMATION/);
   h.tool.printService.printSingleForScan(row, true);
@@ -47,6 +47,7 @@ test('printing, reprinting and wrong confirmation never complete a package; corr
   assert.equal(h.tool.getState().pendingPackageId, null);
   assert.match(h.root.innerHTML, /PICKING LIST COMPLETE/);
 });
+test('invalid scans do not start processing',async()=>{const h=setup();h.tool.openScanMode();for(const scan of ['UNKNOWN','TRACK'])await h.tool.processScan(scan);assert.equal(h.starts.length,0);assert.equal(h.tool.getState().pendingPackageId,null);});
 
 test('pending confirmation survives remount and completion failure permits retry', async () => {
   const h = setup(); await h.tool.processScan('TRACK1');
@@ -64,8 +65,8 @@ test('frontend routes all PL requests through secure API and exports exception r
   const XLSX = require('../vendor/xlsx.full.min.js');
   const window = { XLSX: { ...XLSX, writeFile: book => { workbook = book; } }, MkiteApiConfig: { mode: 'live' }, MkiteApiClient: { post: async (path, body) => { calls.push({ path, body }); return { ok: true, data: body }; } } };
   vm.runInNewContext(fs.readFileSync('vendor/JsBarcode.code128.min.js','utf8'),{window});vm.runInNewContext(fs.readFileSync('js/client-tools/b044/picking-workflow.js', 'utf8'), { window, document: {} });
-  for (const action of ['prepare', 'create', 'complete', 'cancel']) await window.MkiteB044Picking[action]({ test: true });
-  assert.deepEqual(calls.map(c => c.path), ['/api/b044/put-away/prepare', '/api/b044/put-away/create-picking-list', '/api/b044/put-away/complete-package', '/api/b044/put-away/cancel-picking-list']);
+  for (const action of ['prepare', 'create', 'startProcess', 'complete', 'cancel']) await window.MkiteB044Picking[action]({ test: true });
+  assert.deepEqual(calls.map(c => c.path), ['/api/b044/put-away/prepare', '/api/b044/put-away/create-picking-list', '/api/b044/put-away/start-process', '/api/b044/put-away/complete-package', '/api/b044/put-away/cancel-picking-list']);
   window.MkiteB044Picking.exportExceptions([{ trackingNumber: '001', reason: 'NOT FOUND IN MKITE PACKAGE CLASS' }, { trackingNumber: '002', reason: 'STATUS Processing' }, { trackingNumber: '003', reason: 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS' }]);
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets.Exceptions);
   assert.equal(rows[2].REASON, 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS');
@@ -220,7 +221,7 @@ test('contained confirmation prints stored identity and keeps second scan strict
   assert.equal(prints, 0); assert.equal(warnings, 1);
   assert.match(h.root.innerHTML, /POSSIBLE PACKAGE MATCH/);
   assert.match(h.root.innerHTML, /CONFIRM &amp; PRINT/);
-  h.tool.confirmCandidate(item);
+  await h.tool.confirmCandidate(item);
   assert.equal(prints, 1); assert.equal(h.tool.getState().pendingConfirmationTracking, 'ABC/123@B044');
   for (const wrong of ['XXABC/123@B044YY', '123@B044', 'TRACK1', item.finalSku]) {
     await h.tool.processScan(wrong);
@@ -237,10 +238,10 @@ test('multiple matches print only the explicitly selected current PL candidate',
   h.tool.printService.requestPrint = () => prints++;
   h.tool.openScanMode(); await h.tool.processScan('TRACK0 TRACK1');
   assert.equal(prints, 0); assert.match(h.root.innerHTML, /MULTIPLE MATCHES FOUND/);
-  h.tool.selectCandidate('row-9'); assert.equal(prints, 0);
-  h.tool.selectCandidate('row-1'); assert.equal(prints, 1);
+  await h.tool.selectCandidate('row-9'); assert.equal(prints, 0);
+  await h.tool.selectCandidate('row-1'); assert.equal(prints, 1);assert.equal(h.starts.length,1);assert.equal(h.starts[0].packageRecordId,'rec1');
   assert.equal(h.tool.getState().pendingConfirmationTracking, 'TRACK1');
-  h.tool.selectCandidate('row-0'); assert.equal(prints, 1);
+  await h.tool.selectCandidate('row-0'); assert.equal(prints, 1);
   assert.equal(h.tool.getState().pendingPackageId, 'row-1');
 });
 

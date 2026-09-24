@@ -454,12 +454,12 @@
     // B044 intentionally retains its established case-insensitive comparison.
     return window.MkitePackageIdentifierMatcher.matchPackageIdentifier(value, packages, { normalize });
   }
-  function selectCandidate(id) {
+  async function selectCandidate(id) {
     if (operationBusy || state.pendingPackageId || !scanState.candidateIds.includes(id)) return;
     const item = scanPackageById(id);
     if (!item) return;
     scanState = { ...scanState, candidateIds: [item.id] };
-    confirmCandidate(item);
+    await confirmCandidate(item);
   }
   // The existing possible-parts parser also emits descriptive materials. Only its
   // recognized code-shaped SKUs are inventory lookup inputs; do not infer new SKUs.
@@ -570,11 +570,17 @@
   function formatTimestamp(value) { return value ? new Date(value).toLocaleString() : "Not available"; }
   function currentQueue() { return usablePickingList() ? state.pl.packages : []; }
   function readyScan() { scanState = state.pendingPackageId ? { type: "WAITING_FOR_PRINT_CONFIRMATION", scan: "", candidateIds: [state.pendingPackageId] } : { type: "ready", scan: "", candidateIds: [] }; renderScanMode(); }
-  function confirmCandidate(item) {
+  async function confirmCandidate(item) {
     if (!item || !currentQueue().includes(item) || state.pendingPackageId || operationBusy) return;
     if (!item.reconciliationRequired && (item.completedAt || item.packageStatus === "Processed")) { scanState.type = "already"; renderScanMode(); return; }
-    state.temporaryParts = null; state.pendingPackageId = item.id; pendingParts(); state.pendingConfirmationTracking = text(item.trackingNumber); scanState = { type: "WAITING_FOR_PRINT_CONFIRMATION", scan: "", candidateIds: [item.id] }; save();
-    printService.printSingleForScan(item, item.printCount > 0); renderScanMode();
+    operationBusy=true;renderScanMode();const run=lifecycle;
+    try {
+      await window.MkiteB044Picking.startProcess({pickingListNumber:state.pl.pickingListNumber,pickingListRecordId:state.pl.pickingListRecordId,packageRecordId:item.packageRecordId,trackingNumber:item.trackingNumber});
+      if(!context||run!==lifecycle)return;
+      state.temporaryParts = null; state.pendingPackageId = item.id; pendingParts(); state.pendingConfirmationTracking = text(item.trackingNumber); scanState = { type: "WAITING_FOR_PRINT_CONFIRMATION", scan: "", candidateIds: [item.id] }; save();
+      printService.printSingleForScan(item, item.printCount > 0);
+    } catch(error) { if(context&&run===lifecycle){scanState.error=error.message;context.audio.failure();context.toast.show(error.message);} }
+    finally { if(context&&run===lifecycle){operationBusy=false;renderScanMode();} }
   }
   async function processScan(value) {
     const entered = text(value); if (!entered || operationBusy || !usablePickingList()) return;
@@ -597,7 +603,7 @@
       return;
     }
     const result = classifyScan(entered, currentQueue()); const exact = result.type === "EXACT" ? result.candidates[0] : null;
-    if (exact) { scanState = { type: (exact.completedAt || exact.packageStatus === "Processed") ? "already" : "matched", scan: entered, candidateIds: [exact.id] }; if (exact.reconciliationRequired || (!exact.completedAt && exact.packageStatus !== "Processed")) confirmCandidate(exact); else renderScanMode(); return; }
+    if (exact) { scanState = { type: (exact.completedAt || exact.packageStatus === "Processed") ? "already" : "matched", scan: entered, candidateIds: [exact.id] }; if (exact.reconciliationRequired || (!exact.completedAt && exact.packageStatus !== "Processed")) await confirmCandidate(exact); else renderScanMode(); return; }
     const candidates = result.candidates;
     if (candidates.length === 1) { context.audio.warning(); scanState = { type: (candidates[0].completedAt || candidates[0].packageStatus === "Processed") ? "already" : "partial", scan: entered, candidateIds: [candidates[0].id] }; renderScanMode(); return; }
     if (candidates.length > 1) { context.audio.warning(); scanState = { type: "multiple", scan: entered, candidateIds: candidates.map(item => item.id) }; renderScanMode(); return; }

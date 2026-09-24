@@ -213,15 +213,26 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     return { pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId, totalCount: packages.length, assignedCount: packages.length, processedCount: completedCount, processingCount: packages.filter(r => r.packageStatus === 'Processing').length, cancellationAllowed: completedCount === 0 && ['operational','cancelling'].includes(job.phase || 'operational'), completedCount, remainingCount: packages.length - completedCount, packages };
   }
   async function persistProcessTime(key, job, outcome) {
-    // Legacy jobs have no timestamp acknowledging successful master persistence.
-    if (!Number.isFinite(Date.parse(job.persistedAt))) return;
+    // Only updated clients create this durable first-scan checkpoint. Historical
+    // jobs stay blank rather than inferring work time from Picking List creation.
+    if (!Number.isFinite(Date.parse(job.processStartedAt))) return;
     if (!job.processTerminal) {
-      job.processTerminal = { outcome, at: new Date(now()).toISOString() };
+      job.processEndedAt ||= new Date(now()).toISOString();
+      job.processTerminal = { outcome, at: job.processEndedAt };
       // Freeze the successful terminal event before the independent Feishu write.
       await storage.put(key, job);
     }
     if (job.processTerminal.outcome !== outcome) fail('PROCESS_TIME_CONFLICT', 'Picking List terminal outcome changed.');
     await pickingLists.persistProcessTime(job);
+  }
+  async function startProcess(input) {
+    validateInput(input);
+    const key = await storage.get(`pl:${cleanText(input.pickingListNumber)}`); const job = key && await storage.get(key);
+    if (!job || job.phase !== 'operational' || input.pickingListRecordId !== job.pickingListRecordId) fail('PL_NOT_OPERATIONAL', 'Picking List is not operational.');
+    const row = job.rows.find(r => r.packageRecordId === input.packageRecordId && r.normalizedTracking === normalizeSku(input.trackingNumber));
+    if (!row) fail('PACKAGE_NOT_IN_PL', 'PACKAGE NOT IN THIS PICKING LIST');
+    if (!job.processStartedAt) { job.processStartedAt = new Date(now()).toISOString(); await storage.put(key, job); }
+    return { pickingListNumber:job.pickingListNumber, packageRecordId:row.packageRecordId, processStartedAt:job.processStartedAt };
   }
   async function complete(input) {
     validateInput(input);
@@ -315,12 +326,15 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       const summary = publicJob(job);
       await pickingLists.appendLifecycle(job, `STATUS: CANCELLED\nCANCELLED: ${warehouseTimestamp(job.cancelledAt, config.warehouseTimeZone)}\nProcessed packages retained: ${summary.processedRetained}\nProcessing packages returned to Active: ${summary.processingReturnedToActive}\nSkipped/unexpected status packages: ${summary.skipped}`);
       for (const row of job.rows) if (!row.completedAt) { delete row.completionIntent; delete row.actualParts; }
-      if (Number.isFinite(Date.parse(job.persistedAt))) job.processTerminal ||= { outcome: 'CANCELLED', at: new Date(now()).toISOString() };
+      if (Number.isFinite(Date.parse(job.processStartedAt)) && !job.processTerminal) {
+        job.processEndedAt ||= new Date(now()).toISOString();
+        job.processTerminal = { outcome: 'CANCELLED', at: job.processEndedAt };
+      }
       job.phase = 'cancelled'; job.error = undefined; job.message = 'PICKING LIST CANCELLED';
       await storage.put(key, job);
       if (job.processTerminal) await pickingLists.persistProcessTime(job);
     }
     return publicJob(job);
   }
-  return { prepare, create, complete, cancel, reconcile, adminRecover: input => recoverBrokenPickingList(input, config, records, storage, now) };
+  return { prepare, create, startProcess, complete, cancel, reconcile, adminRecover: input => recoverBrokenPickingList(input, config, records, storage, now) };
 }

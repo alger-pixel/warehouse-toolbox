@@ -56,5 +56,5 @@
     frame.onload = () => { frame.contentWindow.focus(); frame.contentWindow.print(); };
     frame.srcdoc = a4Markup(pl, inventory); document.body.appendChild(frame);
   }
-  window.MkiteB044Picking = { adminRecover: (body, key) => post('admin-recover', body, { authorization: 'Bearer ' + key }), reconcile: body => post('reconcile', body), prepare: body => post('prepare', body), create: body => post('create-picking-list', body), complete: body => post('complete-package', body), cancel: body => post('cancel-picking-list', body), exportExceptions, printA4, a4Markup };
+  window.MkiteB044Picking = { adminRecover: (body, key) => post('admin-recover', body, { authorization: 'Bearer ' + key }), reconcile: body => post('reconcile', body), prepare: body => post('prepare', body), create: body => post('create-picking-list', body), startProcess: body => post('start-process', body), complete: body => post('complete-package', body), cancel: body => post('cancel-picking-list', body), exportExceptions, printA4, a4Markup };
 }(window, document));

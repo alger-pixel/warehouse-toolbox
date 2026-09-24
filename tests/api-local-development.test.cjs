@@ -36,10 +36,17 @@ test('production guard blocks a captured client from using a localhost API overr
 });
 test('local failure never retries against production',async()=>{
   const {window,calls}=setup('http://localhost:5501');window.fetch=async url=>{calls.push({url});throw new Error('offline');};
-  const response=await window.MkiteApiClient.post('/api/users/list',{});assert.equal(response.ok,false);assert.equal(response.error.message,'Local Worker is not running on port 8787.');assert.equal(calls.length,1);assert.equal(calls[0].url,'http://127.0.0.1:8787/api/users/list');
+  const response=await window.MkiteApiClient.post('/api/users/list',{});assert.equal(response.ok,false);assert.equal(response.error.code,'CONNECTION_ERROR');assert.equal(response.error.message,'Local Worker is not running on port 8787.');assert.equal(calls.length,2);assert.equal(calls[0].url,'http://127.0.0.1:8787/api/users/list');assert.equal(calls[1].url,'http://127.0.0.1:8787/api/health');
+});
+test('reachable local Worker reports a CORS or browser connection-policy failure accurately',async()=>{
+  const {window,calls}=setup('http://127.0.0.1:5501');let attempt=0;window.fetch=async(url,init)=>{calls.push({url,init});if(attempt++===0)throw new TypeError('Failed to fetch');return {type:'opaque'};};
+  const response=await window.MkiteApiClient.get('/api/sops');assert.equal(response.ok,false);assert.equal(response.error.code,'API_CONNECTION_ERROR');assert.match(response.error.message,/blocked by CORS or another browser connection policy/);assert.equal(calls[1].url,'http://127.0.0.1:8787/api/health');assert.equal(calls[1].init.mode,'no-cors');
+});
+test('SOP configuration and Feishu failures keep their controlled Worker errors',async()=>{
+  for(const error of [{code:'SOP_NOT_CONFIGURED',message:'SOP CLASS table is not configured.'},{code:'SOP_REQUEST_FAILED',message:'Unable to complete the SOP request.'}]){const {window}=setup('http://127.0.0.1:5501');window.fetch=async()=>({ok:false,status:503,json:async()=>({ok:false,error})});const response=await window.MkiteApiClient.get('/api/sops');assert.equal(response.error.code,error.code);assert.equal(response.error.message,error.message);assert.doesNotMatch(response.error.message,/not running/);}
 });
 test('HTML versions config and client scripts together',()=>{
-  const html=fs.readFileSync('index.html','utf8');for(const file of ['api-config','api-client'])assert.ok(html.includes(`${file}.js?v=api-environment-guard-1`));
+  const html=fs.readFileSync('index.html','utf8');for(const file of ['api-config','api-client'])assert.ok(html.includes(`${file}.js?v=api-environment-guard-2`));
 });
 
 for(const origin of ['http://localhost:5502','https://localhost:5501','http://127.0.0.1:9000'])test(`hostname determines local base: ${origin}`,()=>{assert.equal(setup(origin).window.MkiteApiConfig.baseUrl,'http://127.0.0.1:8787');});

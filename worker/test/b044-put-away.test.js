@@ -402,6 +402,7 @@ function commandCompletionFixture() {
   return f;
 }
 const completionInput = pl => ({ pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:'rec-A',trackingNumber:'A',confirmationTracking:'A',partsReady:true,parts:[{sku:'M8LS*14',quantity:2}] });
+const startInput = (pl,tracking='A') => ({ pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:`rec-${tracking}`,trackingNumber:tracking });
 
 test('possible parts never persist; actual usage writes only after Processed and exactly once', async () => {
   const f = commandCompletionFixture(), pl = await f.service().create(f.input), input = completionInput(pl);
@@ -577,22 +578,25 @@ function timedFixture(packages) {
  f.advance=ms=>{time+=ms;};f.processTime=()=>f.data.get('pl-master').fields['PROCESS TIME'];
  return f;
 }
-test('process start is durable and follows confirmed master persistence',async()=>{
- const f=timedFixture(),persist=f.pickingLists.persist;
+test('creation never starts process time; first valid package start is durable and set once',async()=>{
+ const f=timedFixture([packageRecord('A'),packageRecord('B')]),persist=f.pickingLists.persist;
  f.pickingLists.persist=async model=>{f.advance(120000);return persist(model);};
- await f.service().create(f.input);const job=await f.storage.get(`job:${f.input.requestId}`);
- assert.equal(Date.parse(job.persistedAt)-Date.parse(job.createdAt),120000);assert.equal(f.processTime(),undefined);
- await f.service().create(f.input);assert.equal((await f.storage.get(`job:${f.input.requestId}`)).persistedAt,job.persistedAt);
+ const pl=await f.service().create(f.input);let job=await f.storage.get(`job:${f.input.requestId}`);
+ assert.equal(Date.parse(job.persistedAt)-Date.parse(job.createdAt),120000);assert.equal(job.processStartedAt,undefined);assert.equal(f.processTime(),undefined);
+ f.advance(5220000);await f.service().startProcess(startInput(pl));job=await f.storage.get(`job:${f.input.requestId}`);const started=job.processStartedAt;
+ f.advance(1200000);await f.service().startProcess(startInput(pl,'B'));assert.equal((await f.storage.get(`job:${f.input.requestId}`)).processStartedAt,started);
 });
+test('invalid package start is rejected without creating a timer checkpoint',async()=>{const f=timedFixture(),pl=await f.service().create(f.input);await assert.rejects(f.service().startProcess({...startInput(pl),packageRecordId:'rec-UNKNOWN',trackingNumber:'UNKNOWN'}),e=>e.code==='PACKAGE_NOT_IN_PL');assert.equal((await f.storage.get(`job:${f.input.requestId}`)).processStartedAt,undefined);});
 for(const [elapsed,minutes] of [[0,1],[22000,1],[65000,2],[2170000,37]]) test(`completion process time rounds ${elapsed}ms to ${minutes} MIN`,async()=>{
- const f=timedFixture(),pl=await f.service().create(f.input);f.advance(elapsed);
+ const f=timedFixture(),pl=await f.service().create(f.input);f.advance(5220000);await f.service().startProcess(startInput(pl));f.advance(elapsed);
  await f.service().complete({...completionInput(pl),parts:[]});assert.equal(f.processTime(),`COMPLETED | ${minutes} MIN`);
- f.advance(1200000);await f.service().complete({...completionInput(pl),parts:[]});assert.equal(f.processTime(),`COMPLETED | ${minutes} MIN`);
+ const job=await f.storage.get(`job:${f.input.requestId}`);assert.equal(job.processEndedAt,job.processTerminal.at);assert.equal(Date.parse(job.processEndedAt)-Date.parse(job.processStartedAt),elapsed);
+ f.advance(1200000);await f.service().complete({...completionInput(pl),parts:[]});assert.equal(f.processTime(),`COMPLETED | ${minutes} MIN`);assert.equal((await f.storage.get(`job:${f.input.requestId}`)).processEndedAt,job.processEndedAt);
 });
 for(const outcome of ['COMPLETED','CANCELLED']) for(const lost of [false,true]) test(`${outcome} process time reconciles ${lost?'lost response':'failed write'} without elapsed drift`,async()=>{
  const f=timedFixture(),pl=await f.service().create(f.input),update=f.records.updateRecord;
  const run=()=>outcome==='COMPLETED'?f.service().complete({...completionInput(pl),parts:[]}):f.service().cancel({requestId:f.input.requestId,pickingListNumber:pl.pickingListNumber});
- f.advance(65000);let once=true;
+ await f.service().startProcess(startInput(pl));f.advance(65000);let once=true;
  f.records.updateRecord=async args=>{if(once&&args.fields['PROCESS TIME']){once=false;if(lost)await update(args);throw Error('write failed');}return update(args);};
  await assert.rejects(run());const terminal=(await f.storage.get(`job:${f.input.requestId}`)).processTerminal;
  f.advance(1200000);await run();await run();assert.equal(f.processTime(),`${outcome} | 2 MIN`);
@@ -600,7 +604,7 @@ for(const outcome of ['COMPLETED','CANCELLED']) for(const lost of [false,true]) 
 });
 test('partial completion and unresolved parts never finalize process time',async()=>{
  const f=timedFixture([packageRecord('A'),packageRecord('B')]);f.input.rows[1].commandRaw='parts';
- const pl=await f.service().create(f.input);await f.service().complete({...completionInput(pl),parts:[]});assert.equal(f.processTime(),undefined);
+ const pl=await f.service().create(f.input);await f.service().startProcess(startInput(pl));await f.service().complete({...completionInput(pl),parts:[]});assert.equal(f.processTime(),undefined);
  const update=f.records.updateRecord;f.records.updateRecord=async args=>{if(args.fields['PART USED'])throw Error('parts unavailable');return update(args);};
  const input={...completionInput(pl),packageRecordId:'rec-B',trackingNumber:'B',confirmationTracking:'B'};
  await assert.rejects(f.service().complete(input));assert.equal(f.processTime(),undefined);
@@ -609,14 +613,15 @@ test('partial completion and unresolved parts never finalize process time',async
 });
 test('failed cancellation does not finalize; cancellation time follows successful rollback and audit',async()=>{
  const f=timedFixture(),pl=await f.service().create(f.input),update=f.records.updateRecord;
+ await f.service().startProcess(startInput(pl));
  f.records.updateRecord=async args=>{if(args.fields.STATUS==='Active')throw Error('rollback failed');return update(args);};
  const input={requestId:f.input.requestId,pickingListNumber:pl.pickingListNumber};
  await assert.rejects(f.service().cancel(input));assert.equal(f.processTime(),undefined);
  f.advance(65000);f.records.updateRecord=update;await f.service().cancel(input);assert.equal(f.processTime(),'CANCELLED | 2 MIN');
  f.advance(1200000);await f.service().cancel(input);assert.equal(f.processTime(),'CANCELLED | 2 MIN');
 });
-for(const cancelled of [false,true]) test(`legacy ${cancelled?'cancellation':'completion'} leaves process time blank`,async()=>{
- const f=timedFixture(),pl=await f.service().create(f.input);delete f.memory.get(`job:${f.input.requestId}`).persistedAt;
+for(const cancelled of [false,true]) test(`unstarted ${cancelled?'cancellation':'completion'} leaves process time blank`,async()=>{
+ const f=timedFixture(),pl=await f.service().create(f.input);
  if(cancelled)await f.service().cancel({requestId:f.input.requestId,pickingListNumber:pl.pickingListNumber});else await f.service().complete({...completionInput(pl),parts:[]});
  assert.equal(f.processTime(),undefined);
 });

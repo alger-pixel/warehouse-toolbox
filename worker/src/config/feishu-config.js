@@ -13,6 +13,8 @@ export function getFeishuConfig(env) {
     userTableId: typeof env.FEISHU_USER_TABLE_ID === "string" ? env.FEISHU_USER_TABLE_ID.trim() : "",
     toolTableId: typeof env.FEISHU_TOOL_TABLE_ID === "string" ? env.FEISHU_TOOL_TABLE_ID.trim() : "",
     pickingListTableId: typeof env.FEISHU_PICKING_LIST_TABLE_ID === "string" ? env.FEISHU_PICKING_LIST_TABLE_ID.trim() : "",
+    safetyIconTableId: typeof env.FEISHU_SAFETY_ICON_TABLE_ID === "string" ? env.FEISHU_SAFETY_ICON_TABLE_ID.trim() : "",
+    sopTableId: typeof env.FEISHU_SOP_TABLE_ID === "string" ? env.FEISHU_SOP_TABLE_ID.trim() : "",
     warehouseTimeZone: typeof env.WAREHOUSE_TIME_ZONE === "string" && env.WAREHOUSE_TIME_ZONE.trim() ? env.WAREHOUSE_TIME_ZONE.trim() : "America/Toronto"
   };
 }

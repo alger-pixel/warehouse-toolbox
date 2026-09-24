@@ -106,7 +106,7 @@ export function createPickingListService(config, records, options = {}) {
     },
     async persistProcessTime(model) {
       configured();
-      const start = Date.parse(model.persistedAt), end = Date.parse(model.processTerminal?.at);
+      const start = Date.parse(model.processStartedAt), end = Date.parse(model.processEndedAt);
       const outcome = model.processTerminal?.outcome;
       if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || !['COMPLETED', 'CANCELLED'].includes(outcome)) return;
       const value = `${outcome} | ${Math.max(1, Math.ceil((end - start) / 60000))} MIN`;
