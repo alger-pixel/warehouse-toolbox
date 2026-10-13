@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { createFeishuRecordService, FeishuRecordError } from "../src/services/feishu-record-service.js";
 
 const auth = { getTenantAccessToken: async () => "test-token" };
+test('field update uses PUT and preserves supplied existing option IDs',async()=>{
+ let captured;const field={field_name:'PROJECT TYPE',type:3,property:{options:[{id:'existing',name:'Other',color:6},{name:'Re-Work',color:7}]}};
+ const service=createFeishuRecordService(auth,{fetchImpl:async(url,init)=>{captured={url,init};return Response.json({code:0,data:{field:{field_id:'type',...field}}});}});
+ assert.equal((await service.updateField({appToken:'base',tableId:'projects',fieldId:'type',field})).field_id,'type');assert.equal(captured.init.method,'PUT');assert.match(captured.url,/\/fields\/type$/);assert.deepEqual(JSON.parse(captured.init.body),field);
+});
 
 for (const [label, fetchImpl, expected] of [
   ['API rejection', async () => Response.json({ code: 1254045, msg: 'PRIVATE RESPONSE BODY' }, { status: 400 }), { feishuCode: 1254045, httpStatus: 400, errorType: 'FEISHU_API_ERROR' }],
@@ -58,3 +63,24 @@ test("record retrieval and update target one record and preserve supplied field 
 });
 
 test("record deletion targets exactly one record",async()=>{let captured;const service=createFeishuRecordService(auth,{fetchImpl:async(url,init)=>{captured={url,init};return Response.json({code:0,data:{}});}});assert.deepEqual(await service.deleteRecord({appToken:'base',tableId:'table',recordId:'rec-one'}),{recordId:'rec-one'});assert.match(captured.url,/\/records\/rec-one$/);assert.equal(captured.init.method,'DELETE');assert.equal(captured.init.body,undefined);});
+
+test('field creation reuses authenticated Bitable requests and returns the field identity', async () => {
+  let captured;
+  const field = { field_name: 'PROJECT STATUS', type: 3, property: { options: [{ name: 'Preparing', color: 0 }] } };
+  const service = createFeishuRecordService(auth, { fetchImpl: async (url, init) => {
+    captured = { url, init };
+    return Response.json({ code: 0, data: { field: { ...field, field_id: 'fld-new' } } });
+  } });
+  assert.equal((await service.createField({ appToken: 'base/token', tableId: 'table/id', field })).field_id, 'fld-new');
+  assert.match(captured.url, /apps\/base%2Ftoken\/tables\/table%2Fid\/fields$/);
+  assert.equal(captured.init.method, 'POST');assert.equal(captured.init.headers.Authorization, 'Bearer test-token');
+  assert.deepEqual(JSON.parse(captured.init.body), field);
+  const failed = createFeishuRecordService(auth, { fetchImpl: async () => Response.json({ code: 1254001, msg: 'PRIVATE DETAILS' }, { status: 400 }) });
+  await assert.rejects(failed.createField({ appToken: 'base', tableId: 'table', field }), error => error instanceof FeishuRecordError && error.operation === 'field creation' && !error.message.includes('PRIVATE'));
+});
+
+test('record search is bounded and forwards Feishu filters and cursor without fetching every page',async()=>{
+ let sent;const service=createFeishuRecordService(auth,{fetchImpl:async(url,init)=>{sent={url,init};return Response.json({code:0,data:{items:[{record_id:'one'}],has_more:true,page_token:'next'}});}});
+ const filter={conjunction:'and',conditions:[{field_name:'WAREHOUSE ID',operator:'is',value:['MKS66']}]};const page=await service.searchRecords({appToken:'base',tableId:'projects',pageSize:25,pageToken:'cursor',fieldNames:['PROJECT ID'],filter});
+ assert.equal(new URL(sent.url).searchParams.get('page_size'),'25');assert.equal(new URL(sent.url).searchParams.get('page_token'),'cursor');assert.match(sent.url,/records\/search/);assert.deepEqual(JSON.parse(sent.init.body).filter,filter);assert.deepEqual(page,{items:[{record_id:'one'}],hasMore:true,pageToken:'next'});
+});

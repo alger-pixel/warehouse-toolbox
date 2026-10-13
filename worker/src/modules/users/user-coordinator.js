@@ -13,9 +13,9 @@ export class UserManagementCoordinator {
   }
   async handle(request) {
     try {
-      if (!await managementAuthorized(request,this.env)) return Response.json({ok:false,error:{code:'ADMIN_KEY_REQUIRED',message:'Administration key required.'}},{status:401});
       const action=new URL(request.url).pathname.slice(1);
       if (!['list','get','tools','create','update'].includes(action)) return Response.json({ok:false,error:{code:'NOT_FOUND',message:'Unknown administrative action.'}},{status:404});
+      if (action !== 'list' && !await managementAuthorized(request,this.env)) return Response.json({ok:false,error:{code:'ADMIN_KEY_REQUIRED',message:'Administration key required.'}},{status:401});
       const config={...getFeishuConfig(this.env),managementSecret:this.env.USER_MANAGEMENT_ADMIN_KEY};
       const records=createFeishuRecordService(createFeishuAuthService(config));
       const service=createUserService(config,records,this.ctx.storage);

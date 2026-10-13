@@ -13,12 +13,12 @@ export async function managementAuthorized(request, env) {
 }
 export async function handleUsers(action, body, request, env, requestId) {
   if (!env.USER_MANAGEMENT_ADMIN_KEY || env.USER_MANAGEMENT_ADMIN_KEY.length < 32) return errorResponse(503,'USER_MANAGEMENT_NOT_CONFIGURED','User Management requires a Worker administration key.',false,requestId,request,env);
-  if (!await managementAuthorized(request, env)) return errorResponse(401,'ADMIN_KEY_REQUIRED','Enter the User Management administration key.',false,requestId,request,env);
+  if (action !== 'list' && !await managementAuthorized(request, env)) return errorResponse(401,'ADMIN_KEY_REQUIRED','Enter the User Management administration key.',false,requestId,request,env);
   if (!env.FEISHU_USER_TABLE_ID || !env.FEISHU_TOOL_TABLE_ID || !env.USER_MANAGEMENT) return errorResponse(503,'USER_MANAGEMENT_NOT_CONFIGURED','Configure USER CLASS, TOOL CLASS and the User Management coordinator.',false,requestId,request,env);
   // One coordinator per live table, not per user: account uniqueness and admin counts are global.
   const id = env.USER_MANAGEMENT.idFromName(`${env.FEISHU_BASE_APP_TOKEN}:${env.FEISHU_USER_TABLE_ID}`);
   const response = await env.USER_MANAGEMENT.get(id).fetch(new Request(`https://user-management/${action}`, {
-    method:'POST', headers:{'Content-Type':'application/json', Authorization:request.headers.get('Authorization')}, body:JSON.stringify(body)
+    method:'POST', headers:{'Content-Type':'application/json', ...(request.headers.get('Authorization')?{Authorization:request.headers.get('Authorization')}:{})}, body:JSON.stringify(body)
   }));
   return json(await response.json(), response.status, request, env);
 }

@@ -10,6 +10,7 @@
         stage: typeof source.stage === 'string' ? source.stage : undefined,
         operationState: typeof source.operationState === 'string' ? source.operationState : undefined,
         message: String(source.message || "The server could not complete the request."),
+        errors: Array.isArray(source.errors) ? source.errors : Array.isArray(payload?.errors) ? payload.errors : [],
         retryable: source.retryable !== false && response.status >= 500
       },
       records: payload && Array.isArray(payload.records) ? payload.records : []
@@ -44,7 +45,7 @@
         if (!response.ok || !payload || payload.ok === false) return normalizeFailure(response, payload);
         return { ok: true, data: payload.data || payload };
       } catch (error) {
-        const local=window.MkiteApiEnvironment?.isLocalHostname(window.location?.hostname)&&/(?:localhost|127\.0\.0\.1)/i.test(baseUrl);
+        const local=window.MkiteApiEnvironment?.isLocalHostname(window.location?.hostname);
         return { ok: false, error: local ? await localConnectionFailure(baseUrl) : { code: "CONNECTION_ERROR", message: "The secure MKITE API could not be reached.", retryable: true } };
       }
   }

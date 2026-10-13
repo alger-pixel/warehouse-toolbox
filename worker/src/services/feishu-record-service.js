@@ -51,6 +51,23 @@ export function createFeishuRecordService(authService, options = {}) {
       } while (pageToken);
       return fields;
     },
+    async searchRecords({ appToken, tableId, pageSize = 25, pageToken = '', fieldNames = [], filter, sort = [] }) {
+      const query = new URLSearchParams({ page_size: String(pageSize) });
+      if (pageToken) query.set('page_token', pageToken);
+      const body = { ...(fieldNames.length ? { field_names: fieldNames } : {}), ...(filter ? { filter } : {}), ...(sort.length ? { sort } : {}), automatic_fields: false };
+      const data = await request(`${API_ROOT}/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/search?${query}`, { method: 'POST', body: JSON.stringify(body) }, 'record search');
+      return { items: Array.isArray(data.items) ? data.items : [], hasMore: Boolean(data.has_more), pageToken: data.page_token || '' };
+    },
+    async createField({ appToken, tableId, field }) {
+      const url = `${API_ROOT}/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/fields`;
+      const data = await request(url, { method: "POST", body: JSON.stringify(field) }, "field creation");
+      return data.field || {};
+    },
+    async updateField({ appToken, tableId, fieldId, field }) {
+      const url = `${API_ROOT}/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/fields/${encodeURIComponent(fieldId)}`;
+      const data = await request(url, { method: 'PUT', body: JSON.stringify(field) }, 'field update');
+      return data.field || {};
+    },
     async createRecord({ appToken, tableId, fields }) {
       const url = `${API_ROOT}/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records`;
       const data = await request(url, { method: "POST", body: JSON.stringify({ fields }) }, "record creation");

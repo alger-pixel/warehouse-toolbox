@@ -71,9 +71,9 @@ test('saved operation cannot be reused with changed inputs',async()=>{
 test('coordinator serializes simultaneous operations',async()=>{
   const c=new UserManagementCoordinator({},{});let active=0,max=0;c.handle=async()=>{active++;max=Math.max(active,max);await new Promise(r=>setTimeout(r,5));active--;};await Promise.all([c.fetch({}),c.fetch({}),c.fetch({})]);assert.equal(max,1);
 });
-test('new administrative routes require a key; existing health access stays open',async()=>{
+test('operational user list is open while administrative user routes require a key; health stays open',async()=>{
   const request=(action,key)=>new Request(`https://test/api/users/${action}`,{method:'POST',headers:{'Content-Type':'application/json',...(key?{Authorization:`Bearer ${key}`}:{})},body:'{}'});
-  for(const action of ['list','get','tools','create','update']){assert.equal((await handleRequest(request(action),{USER_MANAGEMENT_ADMIN_KEY:adminKey})).status,401);assert.equal((await handleRequest(request(action,'wrong'),{USER_MANAGEMENT_ADMIN_KEY:adminKey})).status,401);}
+  for(const action of ['get','tools','create','update']){assert.equal((await handleRequest(request(action),{USER_MANAGEMENT_ADMIN_KEY:adminKey})).status,401);assert.equal((await handleRequest(request(action,'wrong'),{USER_MANAGEMENT_ADMIN_KEY:adminKey})).status,401);}
   assert.equal((await handleRequest(request('list'),{})).status,503);assert.equal((await handleRequest(request('list',adminKey),{USER_MANAGEMENT_ADMIN_KEY:adminKey})).status,503);assert.equal((await handleRequest(new Request('https://test/api/health'),{})).status,200);
 });
 test('authenticated controller returns whitelist only and no secret logs',async()=>{

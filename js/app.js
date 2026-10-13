@@ -115,6 +115,11 @@
     return `<button class="in-house-card" type="button" data-in-house-tool-id="${escapeHtml(tool.id)}" data-in-house-theme="${escapeHtml(tool.cardTheme || tool.theme || tool.id)}"${active ? "" : " disabled"}><span class="in-house-card-icon">${icons[tool.icon] || icons.warehouse}</span><span class="in-house-card-copy"><span class="in-house-card-category">${escapeHtml(tool.category)}</span><strong>${escapeHtml(tool.name)}</strong><span>${escapeHtml(tool.description)}</span></span><span class="in-house-card-meta">${escapeHtml(active ? `${tool.version} · Active` : "Coming Soon")}</span>${active ? `<span class="in-house-card-arrow">${icons.arrow}</span>` : ""}</button>`;
   }
 
+  function renderProjects() {
+    const entries=window.MkiteProjectsRegistry.all().filter(entry=>!entry.hidden);
+    mainContent.innerHTML=`<div class="projects-library"><header class="projects-heading"><span>MKITE OPERATIONS</span><h2>Projects / Cases</h2><p>Manage project and Case setup, execution, reporting, and closing.</p></header><div class="section-header"><h3>Project workspaces</h3><span>${entries.length} available</span></div><div class="projects-grid">${entries.map(entry=>`<button class="projects-entry projects-entry--${escapeHtml(entry.theme)}" data-route="${escapeHtml(entry.route)}"${entry.status==='active'?'':' disabled'}>${icons[entry.icon]||icons.count}<div><small>${entry.theme==='cases'?'CASE MANAGEMENT':'PROJECT MANAGEMENT'}</small><strong>${escapeHtml(entry.name)}</strong><p>${escapeHtml(entry.description||'')}</p><em>${escapeHtml(entry.version||'')} · ${entry.status==='active'?'Active':'Coming Soon'}</em></div>${icons.arrow}</button>`).join('')}</div></div>`;
+  }
+
   function renderInHouseTools() {
     mainContent.innerHTML = `<div class="in-house-library"><div class="in-house-intro"><div><span class="tool-kicker">MKITE Operations</span><h2>In House Tools</h2><p>Internal warehouse operations and management tools.</p></div><span class="in-house-mark">${icons.receiving}</span></div><div class="in-house-search search-field">${icons.search}<label class="sr-only" for="in-house-search">Search In House Tools</label><input id="in-house-search" type="search" placeholder="Search internal tools..." autocomplete="off"><button class="icon-button search-clear" id="in-house-search-clear" type="button" aria-label="Clear search">×</button></div><section><div class="section-header"><h3>Tool Library</h3><span id="in-house-count"></span></div><div class="in-house-grid" id="in-house-grid"></div></section></div>`;
     const input = document.getElementById("in-house-search"); const clear = document.getElementById("in-house-search-clear"); const grid = document.getElementById("in-house-grid"); const count = document.getElementById("in-house-count");
@@ -210,7 +215,7 @@
     const settings = getSettings();
     const api=window.MkiteApiConfig, apiHost=(()=>{try{return new URL(api.baseUrl).host;}catch{return 'Invalid configuration';}})();
     mainContent.innerHTML = `${pageHeader("Settings", "Application preferences and information.")}
-      <div class="workspace-stack"><section class="panel"><h3>User Management</h3><p>Manage user accounts and warehouse, client and tool assignments.</p><button class="button button-primary" type="button" data-route="settings/users">USER MANAGEMENT</button></section><section class="panel"><div class="panel-header"><div><h3>Appearance</h3><p>Preferences are stored in this browser.</p></div></div><div class="form-control"><label for="settings-theme">Theme</label><select class="select" id="settings-theme"><option value="dark"${settings.theme === "dark" ? " selected" : ""}>Dark</option><option value="light"${settings.theme === "light" ? " selected" : ""}>Light</option></select></div></section>
+      <div class="workspace-stack"><section class="panel"><h3>User Management</h3><p>Manage people and application access.</p><div class="button-row"><button class="button button-primary" type="button" data-route="settings/users">USER CLASS</button><button class="button button-neutral" type="button" disabled>ACCESS CONTROL</button></div></section><section class="panel"><h3>Case Management</h3><p>Maintain operational Case templates and requirements.</p><button class="button button-primary" type="button" data-route="settings/case-categories">CASE CATEGORY</button></section><section class="panel"><div class="panel-header"><div><h3>Appearance</h3><p>Preferences are stored in this browser.</p></div></div><div class="form-control"><label for="settings-theme">Theme</label><select class="select" id="settings-theme"><option value="dark"${settings.theme === "dark" ? " selected" : ""}>Dark</option><option value="light"${settings.theme === "light" ? " selected" : ""}>Light</option></select></div></section>
       <section class="panel"><div class="panel-header"><div><h3>Application Information</h3><p>MKITE Warehouse Tools</p></div><span class="badge">Receiving Live Integration v0.3</span></div><p class="placeholder-block">A modular, browser-based collection of warehouse operations utilities.</p><p class="api-environment"><strong>API: ${escapeHtml(api.environment)}</strong><br><span>${escapeHtml(apiHost)}</span></p></section></div>`;
     document.getElementById("settings-theme").addEventListener("change", (event) => setTheme(event.target.value));
   }
@@ -237,16 +242,35 @@
   function onRoute(route) {
     if (activeToolModule && activeToolModule.cleanup) activeToolModule.cleanup(); activeToolModule = null;
     let title;
-    if (route.view === "settings/users") title = "User Management";
+    if (route.view === "operating-dashboard") title = "Operating Dashboard";
+    else if (route.view === "dashboard") title = "Production Dashboard";
+    else if (route.view === "projects/create-report") title = "Create / Report Project";
+    else if (route.view === "cases") title = "Case Operations";
+    else if (route.view === "cases/create") title = "Create Case";
+    else if (route.view === "cases/report") title = "Report Case";
+    else if (route.view === "cases/search") title = "Open / Search Case";
+    else if (route.view === "cases/view") title = "Case Details";
+    else if (route.view === "projects/project") title = "Project Workspace";
+    else if (route.view === "settings/users") title = "User Management";
+    else if (route.view === "settings/case-categories") title = "Case Category";
     else if (route.view === "tool") title = window.MkiteToolRegistry.get(route.toolId)?.name || "Assisting Tools";
     else if (route.view === "in-house-tool") title = window.MkiteInHouseToolRegistry.get(route.toolId)?.name || "In House Tools";
     else if (route.view === "client-tool") title = window.MkiteClientToolRegistry.get(route.clientId, route.toolId, route.warehouse)?.name || "Client Tool";
     else if (route.view === "client") title = window.MkiteClientRegistry.get(route.clientId)?.name || "Client Tools";
     else title = route.view === "tools" ? "Assisting Tools" : route.view === "client-tools" ? "Client Tools" : route.view === "in-house-tools" ? "In House Tools" : route.view.charAt(0).toUpperCase() + route.view.slice(1);
     sectionTitle.textContent = title; document.title = `${title} | MKITE Warehouse Tools`;
-    const navigationRoute = route.view === "settings/users" ? "settings" : route.view === "tool" ? "tools" : route.view === "in-house-tool" ? "in-house-tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
+    const navigationRoute = route.view.startsWith("projects") || route.view.startsWith("cases") ? "projects" : route.view.startsWith("settings/") ? "settings" : route.view === "tool" ? "tools" : route.view === "in-house-tool" ? "in-house-tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
     document.querySelectorAll(".nav-item").forEach((item) => { const active = item.dataset.route === navigationRoute; item.classList.toggle("is-active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
-    if (route.view === "dashboard") renderDashboard();
+    if (route.view === "operating-dashboard") { activeToolModule=window.MkiteOperatingDashboard; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
+    else if (route.view === "dashboard") renderDashboard();
+    else if (route.view === "projects") renderProjects();
+    else if (route.view === "projects/create-report") { activeToolModule=window.MkiteProjectsWorkspace; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
+    else if (route.view === "projects/project") { activeToolModule=window.MkiteProjectLifecycle; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent,projectId:route.projectId}); }
+    else if (route.view === "cases") { activeToolModule=window.MkiteCaseOperations; mainContent.innerHTML=activeToolModule.renderHub(); }
+    else if (route.view === "cases/create") { activeToolModule=window.MkiteCreateCase; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
+    else if (route.view === "cases/report") { activeToolModule=window.MkiteReportCase; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
+    else if (route.view === "cases/search") { activeToolModule=window.MkiteSearchCase; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
+    else if (route.view === "cases/view") { activeToolModule=window.MkiteSearchCase; mainContent.innerHTML=activeToolModule.renderFull(); activeToolModule.init({root:mainContent,caseId:route.caseId}); }
     else if (route.view === "tools") renderTools();
     else if (route.view === "client-tools") renderClientTools();
     else if (route.view === "client") renderClientPool(route.clientId);
@@ -254,6 +278,7 @@
     else if (route.view === "in-house-tools") renderInHouseTools();
     else if (route.view === "in-house-tool") renderInHouseTool(route.toolId);
     else if (route.view === "settings/users") { activeToolModule = window.MkiteUserManagement; mainContent.innerHTML = activeToolModule.render(); activeToolModule.init({ root: mainContent }); }
+    else if (route.view === "settings/case-categories") { activeToolModule = window.MkiteCaseCategoryManagement; mainContent.innerHTML = activeToolModule.render(); activeToolModule.init({ root: mainContent }); }
     else if (route.view === "settings") renderSettings();
     else renderTool(route.toolId);
     closeMobileMenu(); mainContent.focus({ preventScroll: true });
@@ -280,5 +305,6 @@
     else logo.alt = "MKITE International logo unavailable";
   });
   const settings = getSettings(); setTheme(settings.theme); setCollapsed(Boolean(settings.sidebarCollapsed));
+  window.MkiteRouter.beforeChange(() => !activeToolModule?.canLeave || activeToolModule.canLeave());
   window.MkiteRouter.start(onRoute);
 }(window, document));

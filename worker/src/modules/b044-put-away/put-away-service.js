@@ -34,6 +34,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
   const args = { appToken: config.appToken, tableId: config.packageTableId };
   const now = options.now || (() => Date.now());
   const activity = createPackageActivityService({ timeZone: config.warehouseTimeZone });
+  const partUsed = options.partUsed;
   function validateInput(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_INPUT', 'Provide a JSON object.');
   }
@@ -266,6 +267,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       const fields = await pickingLists.completionFields(job, row, row.completionIntent);
       await pickingLists.persistCompletion(job, fields);
     }
+    if (row.commandRaw && row.completedAt && partUsed) for (const part of row.completionIntent.parts) await partUsed.recordPartUsage({clientId:'B044',partSku:part.sku,event:`B044 PUT AWAY - ADD PART BY PACKAGE:${row.trackingNumber}`,quantity:part.quantity,warehouse:'MKS66',toolId:'CT-MKS66-B044-0001',referenceId:row.packageRecordId,usedBy:cleanText(input.usedBy)||'Warehouse Operator',note:`Picking List ${job.pickingListNumber}`,idempotencyKey:`B044:${row.completionIntent.requestId}:${part.sku}`});
     if (job.rows.every(r => r.completedAt)) {
       const verified = await reconcile({ pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId });
       if (verified.packages.every(r => r.packageStatus === 'Processed' && r.completedAt && !r.reconciliationRequired)) {

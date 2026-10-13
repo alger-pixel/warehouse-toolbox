@@ -135,28 +135,18 @@ For interactive testing with the **local Worker**:
    Do not overwrite existing configuration with the example. Add a locally generated
    `USER_MANAGEMENT_ADMIN_KEY`. The real Feishu credentials still address a real
    table: pressing Save in this setup writes USER CLASS, even though the Worker is local.
-2. Start the Worker in a terminal:
-
-   ```sh
-   cd /Users/algerou/warehouse-toolbox/worker
-   npx wrangler dev --local --port 8787
-   ```
-
-3. Start the static frontend in another terminal:
+2. Start the Worker and frontend proxy together:
 
    ```sh
    cd /Users/algerou/warehouse-toolbox
-   python3 -m http.server 5501 --bind 127.0.0.1
+   npm run dev
    ```
 
-4. Open `http://127.0.0.1:5501/#settings/users` or
-   `http://localhost:5501/#settings/users` and reload the page after updating files.
-   User Management automatically uses `http://localhost:8787` on these two exact
-   origins; no console override is required. Production and all existing operational
-   API calls retain the deployed Worker URL. There is no fallback to production if
-   the local Worker is unavailable. In Network, verify `/api/users/list` and
-   `/api/users/tools` target `http://localhost:8787`.
-5. Enter the local administration key in the form. Confirm ALGER loads, edit it,
+3. Open only `http://127.0.0.1:5501/#settings/users` and reload the page after
+   updating files. Browser requests remain on `127.0.0.1:5501/api/*`; the local
+   server proxies them internally to the Worker. Production retains the deployed
+   Worker URL and there is no fallback to production if the local Worker is unavailable.
+4. Enter the local administration key in the form. Confirm ALGER loads, edit it,
    and verify final-admin status controls are disabled while password reset remains
    available. Add a normal user, select scope, assign tools, and save. Reopen with
    blank password inputs, change only the display name, and verify dates/hash
@@ -176,14 +166,10 @@ files in `worker/.wrangler/state/v3/do`. Reloading correctly clears the in-memor
 administration key and restores the initial screen; this is not a response-envelope
 or Feishu single-option parsing mismatch.
 
-The shared `.vscode/settings.json` excludes `worker/**` and Wrangler-generated
-folders from Live Server's watcher, retaining its existing default exclusions.
-**Stop and restart VS Code Live Server** after pulling/changing this setting; a
-browser refresh alone does not rebuild its watcher. Keep the local Worker running,
-open `http://127.0.0.1:5501/#settings/users`, enter the administration key, and verify
-ALGER remains visible after both requests complete. Frontend HTML/JS/CSS changes
-still reload normally. Alternatively use the documented Python static server,
-which has no automatic reload watcher.
+The supported local workflow is `npm run dev`; VS Code Live Server and a standalone
+Python static server do not provide the required `/api/*` proxy. Open
+`http://127.0.0.1:5501/#settings/users`, enter the administration key, and verify
+ALGER remains visible after both requests complete.
 
 Read-only diagnosis confirmed the real local responses were `{ok:true,data:[...]}`:
 one user (U-0001 / ALGER, Active, isAdmin=true) and three tools. The shared API client

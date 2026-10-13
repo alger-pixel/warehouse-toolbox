@@ -37,8 +37,8 @@ test('new searches reset page while navigation retains submitted filters', async
 test('one shared sidebar preserves route IDs and required order in all layouts', () => {
   const html = fs.readFileSync('index.html', 'utf8');
   const nav = [...html.matchAll(/class="nav-item[^>]*data-route="([^"]+)"[^>]*>.*?<span>([^<]+)<\/span>/g)];
-  assert.deepEqual(nav.map(m => m[1]), ['dashboard', 'in-house-tools', 'client-tools', 'tools', 'settings']);
-  assert.deepEqual(nav.map(m => m[2]), ['Dashboard', 'In House Tools', 'Client Tools', 'Assisting Tools', 'Settings']);
+  assert.deepEqual(nav.map(m => m[1]), ['operating-dashboard', 'dashboard', 'projects', 'in-house-tools', 'client-tools', 'tools', 'settings']);
+  assert.deepEqual(nav.map(m => m[2]), ['Operating Dashboard', 'Production Dashboard', 'Projects / Cases', 'In House Tools', 'Client Tools', 'Assisting Tools', 'Settings']);
   const router = fs.readFileSync('js/router.js', 'utf8'); assert.match(router, /tools/); assert.match(router, /tool/);
 });
 test('legacy tools URLs still parse and navigate unchanged', () => {

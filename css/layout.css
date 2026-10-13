@@ -28,6 +28,9 @@
 .app-shell.is-collapsed .collapse-button { position:static; margin:0; background:var(--panel-bg); box-shadow:var(--shadow-sm); }
 .app-shell.is-collapsed .collapse-button svg { transform: rotate(180deg); }
 .app-shell.is-collapsed .nav-item { justify-content: center; gap: 0; padding-inline: 0; }
+@media (min-width:801px) {
+  .app-shell.is-collapsed .nav-item span { position:absolute; width:1px; height:1px; overflow:hidden; }
+}
 .page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 36px; margin-bottom: 48px; }
 .page-header h2 { margin: 0 0 10px; font-size: clamp(36px,4vw,52px); font-weight: 740; line-height: 1.05; letter-spacing: -.052em; }
 .page-header p { max-width: 700px; margin: 0; color: var(--text-secondary); font-size: 16px; line-height: 1.65; }

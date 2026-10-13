@@ -368,7 +368,7 @@ Required bindings:
 
 `.dev.vars` and `.env*` files are ignored. Copy `worker/.dev.vars.example` for local development and replace placeholders only in the ignored local file. Never paste the Feishu App Secret into frontend files, committed source, `wrangler.toml`, README, or chat. Configure production secrets through Cloudflare Worker secret/environment bindings.
 
-CORS uses an exact, comma-separated `ALLOWED_ORIGINS` allowlist. The deployed configuration permits `https://alger-pixel.github.io`, `http://127.0.0.1:5501`, and `http://localhost:5501`. These two fixed Live Server origins support local Receiving tests; arbitrary localhost ports and wildcard origins remain blocked.
+CORS uses an exact, comma-separated `ALLOWED_ORIGINS` allowlist. The deployed configuration permits `https://alger-pixel.github.io`, `http://127.0.0.1:5501`, and the retained legacy origin `http://localhost:5501`. The supported browser URL for local development is only `http://127.0.0.1:5501`; arbitrary localhost ports and wildcard origins remain blocked.
 
 Deployment outline:
 
@@ -410,8 +410,17 @@ From the repository root, the deployment command (not executed during recovery) 
 npx wrangler deploy --config worker/wrangler.toml
 ```
 
-After deployment and configuration, the frontend on `http://localhost:5501`
-can call the configured live Worker; that exact origin is allowed by CORS.
+For local development, start the Worker and same-origin frontend proxy together:
+
+```sh
+npm run dev
+```
+
+Open only `http://127.0.0.1:5501`. Browser requests use
+`http://127.0.0.1:5501/api/*`; the local server proxies them internally to the
+Worker on `127.0.0.1:8787`. If either fixed port is occupied, startup fails
+clearly instead of choosing another port. Stop the command once to stop both
+processes. Production continues to call the deployed secure Worker directly.
 Run `npm --prefix worker test` and `node --test tests/*.test.cjs` before deployment.
 
 ### How to Add a New Client

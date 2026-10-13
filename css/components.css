@@ -177,3 +177,9 @@ kbd { min-width: 21px; padding: 1px 6px; border: 1px solid var(--border-color); 
 .library-view .page-header { padding-top: 10px; }
 .library-view .tool-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 .library-view .tool-card { min-height: 200px; }
+
+.dashboard-tool-card[data-dashboard-theme="part-used-inventory-count"] { --card-accent:#d5a16a; background:#80512b; }
+.dashboard-tool-card[data-dashboard-theme="part-used-inventory-count"]::before { background-image:url('../assets/images/SCANNER.png'); background-position:right 48%; background-size:cover; opacity:1; }
+.dashboard-tool-card[data-dashboard-theme="part-used-inventory-count"]::after { background:linear-gradient(90deg,rgba(48,29,17,.96) 0%,rgba(64,38,21,.88) 48%,rgba(64,38,21,.48) 72%,rgba(48,29,17,.18) 100%); }
+.dashboard-tool-card[data-dashboard-theme="part-used-inventory-count"] .dashboard-tool-copy>span:not(.dashboard-tool-category),
+.dashboard-tool-card[data-dashboard-theme="part-used-inventory-count"] .dashboard-tool-version { color:#f4e6d8; }

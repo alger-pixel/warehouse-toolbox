@@ -5,6 +5,7 @@ import { createFeishuRecordService } from '../../services/feishu-record-service.
 import { createPickingListService } from '../picking-lists/picking-list-service.js';
 import { createB044PutAwayService } from './put-away-service.js';
 import { PickingListError, PickingListNumberLookupError } from '../picking-lists/picking-list-service.js';
+import { createPartUsedCoordinatorClient } from '../part-used/part-used-coordinator.js';
 // One Durable Object per Base: serializes B044 assignments, identity allocation and completions.
 // Durable checkpoints survive restarts; the promise queue only serializes live requests.
 export class B044PutAwayCoordinator {
@@ -33,7 +34,7 @@ export class B044PutAwayCoordinator {
     try {
       const config = getFeishuConfig(this.env), auth = createFeishuAuthService(config), records = createFeishuRecordService(auth);
       const pickingLists = createPickingListService(config, records, { onStage });
-      const service = createB044PutAwayService(config, records, pickingLists, this.ctx.storage, { onStage });
+      const service = createB044PutAwayService(config, records, pickingLists, this.ctx.storage, { onStage, partUsed: createPartUsedCoordinatorClient(this.env) });
       onStage('READ_REQUEST');
       const input = await request.json();
       const data = await (recovery ? service.adminRecover(input) : reconcile ? service.reconcile(input) : start ? service.startProcess(input) : complete ? service.complete(input) : cancel ? service.cancel(input) : service.create(input));

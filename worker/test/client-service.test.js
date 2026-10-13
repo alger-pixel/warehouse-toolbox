@@ -6,11 +6,11 @@ import { createClientService } from "../src/modules/clients/client-service.js";
 const config = { appToken: "base", clientTableId: "clients" };
 const client = (recordId, clientId) => ({ record_id: recordId, fields: { [CLIENT_FIELDS.clientId]: clientId } });
 
-test("Client ID field mapping is centralized and exact lookup is case-sensitive", async () => {
+test("Client ID field mapping is centralized and exact lookup is normalized for duplicate safety", async () => {
   assert.deepEqual(CLIENT_FIELDS, { clientId: "CLIENT ID" });
   const service = createClientService(config, { listRecords: async () => [client("one", "B044")] });
   assert.equal((await service.exact("B044")).recordId, "one");
-  assert.equal(await service.exact("b044"), null);
+  assert.equal((await service.exact("b044")).recordId, "one");
 });
 
 test("client search ranks exact, prefix, contains, then case-insensitive suggestions", async () => {

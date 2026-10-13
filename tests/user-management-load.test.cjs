@@ -33,7 +33,7 @@ async function setup(empty=false) {
  const coordinator=new UserManagementCoordinator({storage:{}},env);
  env.USER_MANAGEMENT={idFromName:name=>name,get:()=>coordinator};
  const envelopes=[],calls=[],ui=dom();
- const window={location:{origin:'http://127.0.0.1:5501'},fetch:async(url,options)=>{
+ const window={location:{origin:'http://127.0.0.1:5501',hostname:'127.0.0.1'},fetch:async(url,options)=>{
    calls.push({url,authorization:options.headers.Authorization});
    const response=await handleRequest(new Request(url,options),env);
    assert.equal(response.status,200);envelopes.push(await response.clone().json());return response;
@@ -64,7 +64,7 @@ test('correct key + actual Worker envelopes unlock and render ALGER with Add/Edi
   h.node('[data-um-tool-filter="warehouse"]').value='';h.node('[data-um-tool-filter="clientId"]').value='';h.change();assert.match(h.node('[data-um-available]').innerHTML,/TINECO TOC/);
 
   h.click('[data-um-cancel]');h.click('[data-um-add]');assert.match(h.node('[data-um-editor]').innerHTML,/Add User/);
-  h.click('[data-um-refresh]');await loaded(h);assert.equal(h.calls.length,4);for(const call of h.calls){assert.equal(call.authorization,`Bearer ${administrationKey}`);assert.ok(call.url.startsWith('http://localhost:8787/api/users/'));}
+  h.click('[data-um-refresh]');await loaded(h);assert.equal(h.calls.length,4);for(const call of h.calls){assert.equal(call.authorization,`Bearer ${administrationKey}`);assert.match(call.url,/^http:\/\/127\.0\.0\.1:5501\/api\/users\//);}
  }finally{h.restore();}
 });
 test('empty Worker users array is a loaded empty list, not a locked screen',async()=>{

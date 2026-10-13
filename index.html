@@ -19,16 +19,21 @@
   <link rel="stylesheet" href="css/in-house-tools/in-house-tools.css">
   <link rel="stylesheet" href="css/in-house-tools/batch-inventory.css">
   <link rel="stylesheet" href="css/in-house-tools/batch-picking-list.css">
+  <link rel="stylesheet" href="css/in-house-tools/part-used-inventory-count.css">
   <link rel="stylesheet" href="css/user-management.css">
+  <link rel="stylesheet" href="css/case-category.css?v=case-category-v1">
+  <link rel="stylesheet" href="css/projects.css?v=project-closing-optional-handover-v1">
+  <link rel="stylesheet" href="css/cases.css?v=case-operations-hub-v1">
+  <link rel="stylesheet" href="css/operating-dashboard.css?v=operating-dashboard-v1">
   <link rel="stylesheet" href="css/responsive.css">
-  <link rel="stylesheet" href="css/client-tools/tineco-inventory.css">
+  <link rel="stylesheet" href="css/client-tools/tineco-inventory.css?v=tineco-live-location-reentry-v1">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="app-shell" id="app-shell">
     <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
       <div class="sidebar-header">
-        <button class="brand" type="button" data-route="dashboard" aria-label="Open dashboard">
+        <button class="brand" type="button" data-route="operating-dashboard" aria-label="Open Operating Dashboard">
           <img class="directory-sidebar-logo directory-sidebar-logo--dark" src="assets/images/MKS LOGO.png" alt="MKS">
           <img class="directory-sidebar-logo directory-sidebar-logo--light" src="assets/images/MKS LOGO BLACK.png" alt="MKS">
           <img class="brand-logo brand-logo--dark" src="assets/images/MKS LOGO.png" alt="MKS">
@@ -37,7 +42,9 @@
         <button class="icon-button collapse-button" id="collapse-button" type="button" aria-label="Collapse sidebar" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
       </div>
       <nav class="sidebar-nav" aria-label="Application navigation">
-        <button class="nav-item is-active" type="button" data-route="dashboard" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Dashboard</span></button>
+        <button class="nav-item is-active" type="button" data-route="operating-dashboard" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18M3 12h18M3 19h18M7 3v18M15 3v18"/><circle cx="11" cy="12" r="2"/></svg><span>Operating Dashboard</span></button>
+        <button class="nav-item" type="button" data-route="dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Production Dashboard</span></button>
+        <button class="nav-item" type="button" data-route="projects" aria-label="Projects and Cases"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5zM8 9h8M8 13h5"/></svg><span>Projects / Cases</span></button>
         <button class="nav-item" type="button" data-route="in-house-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21v-8h10v8M9 10h6"/></svg><span>In House Tools</span></button>
         <button class="nav-item" type="button" data-route="client-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20v-9l8-4 8 4v9M8 9V5h8v4M8 15h2m4 0h2M12 12v8"/></svg><span>Client Tools</span></button>
         <button class="nav-item" type="button" data-route="tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2"/></svg><span>Assisting Tools</span></button>
@@ -53,7 +60,7 @@
       <header class="topbar">
         <div class="topbar-left">
           <button class="icon-button menu-button" id="menu-button" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
-          <div><span class="eyebrow">Warehouse Tools</span><h1 id="section-title">Dashboard</h1></div>
+          <div><span class="eyebrow">Warehouse Tools</span><h1 id="section-title">Operating Dashboard</h1></div>
         </div>
         <form class="directory-header-search" id="directory-header-form" role="search"><label class="sr-only" for="directory-header-query">Search client tools by name or Tool ID</label><input id="directory-header-query" type="search" placeholder="Search tools, clients, or keywords..."></form>
         <div class="directory-header-brand"><strong>MKITE Warehouse Tools</strong><span>Smarter Tools for a More Efficient Tomorrow</span></div>
@@ -76,8 +83,20 @@
   <script src="js/clients-registry.js"></script>
   <script src="js/client-tools-registry.js"></script>
   <script src="js/in-house-tools-registry.js"></script>
-  <script src="js/services/api-config.js?v=api-environment-guard-2"></script>
-  <script src="js/services/api-client.js?v=sop-delete-1"></script>
+  <script src="js/projects-registry.js"></script>
+  <script src="js/projects/create-report.js"></script>
+  <script src="js/projects/project-in-progress.js?v=project-closing-refinement-v1"></script>
+  <script src="js/projects/project-finalizing.js?v=project-closing-refinement-v1"></script>
+  <script src="js/projects/project-closing.js?v=project-closing-optional-handover-v1"></script>
+  <script src="js/projects/project-workspace.js?v=project-closing-refinement-v1"></script>
+  <script src="js/cases/case-hub.js?v=case-operations-hub-v1"></script>
+  <script src="js/cases/case-label.js?v=case-label-v1"></script>
+  <script src="js/cases/report-case.js?v=report-case-v1"></script>
+  <script src="js/cases/search-case.js?v=case-search-v1"></script>
+  <script src="js/cases/create-case.js?v=case-category-combobox-v1"></script>
+  <script src="js/operating-dashboard.js?v=operating-dashboard-v1"></script>
+  <script src="js/services/api-config.js?v=local-same-origin-proxy-1"></script>
+  <script src="js/services/api-client.js?v=local-same-origin-proxy-1"></script>
   <script src="js/in-house-tools/receiving/receiving-service.js"></script>
   <script src="js/in-house-tools/move-location-by-sku/move-location-service.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
@@ -101,9 +120,11 @@
   <script src="js/in-house-tools/receiving/receiving.js"></script>
   <script src="js/in-house-tools/batch-inventory.js"></script>
   <script src="js/in-house-tools/batch-picking-list.js"></script>
-  <script src="js/client-tools/tineco-toc/inventory.js"></script>
+  <script src="js/in-house-tools/part-used-inventory-count.js"></script>
+  <script src="js/client-tools/tineco-toc/inventory.js?v=tineco-live-location-reentry-v1"></script>
   <script src="js/in-house-tools/move-location-by-sku/move-location.js"></script>
   <script src="js/settings/user-management.js"></script>
+  <script src="js/settings/case-category.js?v=case-category-v1"></script>
   <script src="js/router.js"></script>
   <script src="js/app.js"></script>
 </body>

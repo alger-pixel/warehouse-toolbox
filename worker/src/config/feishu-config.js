@@ -15,6 +15,11 @@ export function getFeishuConfig(env) {
     pickingListTableId: typeof env.FEISHU_PICKING_LIST_TABLE_ID === "string" ? env.FEISHU_PICKING_LIST_TABLE_ID.trim() : "",
     safetyIconTableId: typeof env.FEISHU_SAFETY_ICON_TABLE_ID === "string" ? env.FEISHU_SAFETY_ICON_TABLE_ID.trim() : "",
     sopTableId: typeof env.FEISHU_SOP_TABLE_ID === "string" ? env.FEISHU_SOP_TABLE_ID.trim() : "",
+    partUsedTableId: typeof env.FEISHU_PART_USED_TABLE_ID === "string" ? env.FEISHU_PART_USED_TABLE_ID.trim() : "",
+    partUsedInventoryCountTableId: typeof env.FEISHU_PART_USED_INVENTORY_COUNT_TABLE_ID === "string" ? env.FEISHU_PART_USED_INVENTORY_COUNT_TABLE_ID.trim() : "",
+    projectTableId: typeof env.FEISHU_PROJECT_TABLE_ID === "string" ? env.FEISHU_PROJECT_TABLE_ID.trim() : "",
+    caseCategoryTableId: typeof env.FEISHU_CASE_CATEGORY_TABLE_ID === "string" ? env.FEISHU_CASE_CATEGORY_TABLE_ID.trim() : "",
+    caseClassTableId: typeof env.FEISHU_CASE_CLASS_TABLE_ID === "string" ? env.FEISHU_CASE_CLASS_TABLE_ID.trim() : "",
     warehouseTimeZone: typeof env.WAREHOUSE_TIME_ZONE === "string" && env.WAREHOUSE_TIME_ZONE.trim() ? env.WAREHOUSE_TIME_ZONE.trim() : "America/Toronto"
   };
 }

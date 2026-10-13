@@ -7,7 +7,7 @@ test('deployment check accepts only the mkite-secure-api Worker configuration',(
  assert.throws(()=>checkWorkerConfig(wrong),/Worker deployment blocked.*mkite-secure-api/);fs.rmSync(dir,{recursive:true,force:true});
 });
 test('root scripts use explicit Worker config and safe local ports',()=>{
- const scripts=require('../package.json').scripts;assert.equal(scripts['worker:dev'],'npx wrangler dev --config worker/wrangler.toml --local --port 8787');assert.match(scripts['worker:deploy'],/^npm run worker:check && npx wrangler deploy --config worker\/wrangler\.toml$/);assert.equal(scripts['frontend:dev'],'python3 -m http.server 5501');
+ const scripts=require('../package.json').scripts;assert.equal(scripts['worker:dev'],'npx wrangler dev --config worker/wrangler.toml --local --port 8787');assert.match(scripts['worker:deploy'],/^npm run worker:check && npx wrangler deploy --config worker\/wrangler\.toml$/);assert.equal(scripts['frontend:dev'],'node scripts/local-dev-server.js');assert.equal(scripts.dev,'node scripts/local-dev.js');
 });
 test('developer secrets stay ignored, example values are placeholders, and runtime frontend contains no upstream credentials',()=>{
  const ignore=fs.readFileSync('.gitignore','utf8');assert.match(ignore,/^worker\/\.dev\.vars$/m);assert.match(ignore,/^!worker\/\.dev\.vars\.example$/m);

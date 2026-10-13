@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url); const XLSX = require('../../vend
 const config = { appToken: 'base', packageTableId: 'packages', pickingListTableId: 'lists', warehouseTimeZone: 'America/Toronto' };
 const source = trackingNumber => ({ trackingNumber, arrivalDate: '2026-09-05', inboundSku: 'ABC', warehouseInboundOrder: 'RMAB044-1', excelRow: 2 });
 const packageRecord = (sku, status = 'Active', location = 'A-2') => ({ record_id: `rec-${sku}`, fields: { SKU: sku, STATUS: status, LOCATION: location, 'CLIENT ID': 'B044', 'DATE OF RECEIVED': 123, NOTE: 'old history' } });
-function fixture(packages = [packageRecord('A')]) {
+function fixture(packages = [packageRecord('A')], options = {}) {
   const data = new Map(packages.map(r => [r.record_id, structuredClone(r)])); const events = []; const memory = new Map();
   const storage = { async get(k) { return structuredClone(memory.get(k)); }, async put(k, v) { memory.set(k, structuredClone(v)); } };
   const records = {
@@ -21,7 +21,7 @@ function fixture(packages = [packageRecord('A')]) {
     async updateRecord({ recordId, fields }) { events.push({ recordId, fields }); Object.assign(data.get(recordId).fields, fields); return structuredClone(data.get(recordId)); }
   };
   const pickingLists = createPickingListService(config, records);
-  const service = () => createB044PutAwayService(config, records, pickingLists, storage, { now: () => Date.parse('2026-09-05T20:21:00Z') });
+  const service = () => createB044PutAwayService(config, records, pickingLists, storage, { now: () => Date.parse('2026-09-05T20:21:00Z'), partUsed: options.partUsed });
   const input = { requestId: 'request-1234567890', rows: packages.map(r => source(r.fields.SKU)), sourceFile: 'source.xlsx', totalSourceRows: packages.length };
   return { data, events, storage, memory, records, pickingLists, service, input };
 }
@@ -402,6 +402,7 @@ function commandCompletionFixture() {
   return f;
 }
 const completionInput = pl => ({ pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:'rec-A',trackingNumber:'A',confirmationTracking:'A',partsReady:true,parts:[{sku:'M8LS*14',quantity:2}] });
+test('confirmed B044 parts log once through the shared ledger identity on retry',async()=>{const ledger=new Map(),partUsed={recordPartUsage:async input=>{if(!ledger.has(input.idempotencyKey))ledger.set(input.idempotencyKey,input);return ledger.get(input.idempotencyKey);}},f=fixture([packageRecord('A')],{partUsed});f.input.rows[0].commandRaw='parts';const pl=await f.service().create(f.input),input=completionInput(pl);await f.service().complete(input);await f.service().complete(input);assert.equal(ledger.size,1);const usage=[...ledger.values()][0];assert.equal(usage.event,'B044 PUT AWAY - ADD PART BY PACKAGE:A');assert.equal(usage.clientId,'B044');assert.equal(usage.toolId,'CT-MKS66-B044-0001');assert.equal(usage.referenceId,'rec-A');assert.equal(usage.quantity,2);});
 const startInput = (pl,tracking='A') => ({ pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:`rec-${tracking}`,trackingNumber:tracking });
 
 test('possible parts never persist; actual usage writes only after Processed and exactly once', async () => {

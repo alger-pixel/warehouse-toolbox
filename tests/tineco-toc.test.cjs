@@ -60,7 +60,7 @@ test('success explicitly removes stale pending metadata from returned active vis
 });
 test('exit outcomes remain visible and separated in every stage',async()=>{
  const h=setup();h.t.begin('SN');await flush();
- for(const [step,outcomes] of [[0,['NFF','Awaiting Parts']],[1,['Can Not Be Fixed']],[2,['Final QC Fail']]]){
+ for(const [step,outcomes] of [[0,['NFF','Awaiting Parts','EC Check']],[1,['Can Not Be Fixed','Awaiting Parts']],[2,['Final QC Fail']]]){
    if(step){h.t.move(step);await flush();}
    const html=h.node('#tcu-app').innerHTML;
    assert.match(html,/class="tcu-main-action"/);assert.match(html,/class="tcu-exit-actions"/);assert.match(html,/EXIT — save outcome/);assert.match(html,/class="tcu-cancel-action"/);assert.doesNotMatch(html,/<details>/);
@@ -94,8 +94,11 @@ for(const step of [0,1,2])test(`Pending unit resumes directly at stage ${step+1}
  if(step===2)assert.match(html,/old failure/);h.module.cleanup();
 });
 for(const status of ['Completed','Disposal'])test(`${status} response displays read-only state without active form`,async()=>{
- const h=setup();h.window.MkiteApiClient.post=async(_,body)=>({ok:true,data:{requestId:body.requestId,sn:body.sn,unitId:'TCU-existing',phase:status.toLowerCase(),clientStatus:status,previousLaborMinutes:23,result:{repairResult:'Completed'}}});h.t.begin('SN');await flush();const html=h.node('#tcu-app').innerHTML;assert.match(html,status==='Completed'?/UNIT ALREADY COMPLETED/:/UNIT MARKED FOR DISPOSAL/);assert.doesNotMatch(html,/<fieldset/);assert.match(html,/23/);h.module.cleanup();
+ const h=setup();h.window.MkiteApiClient.post=async(_,body)=>({ok:true,data:{requestId:body.requestId,sn:body.sn,unitId:'TCU-existing',phase:status.toLowerCase(),clientStatus:status,previousLaborMinutes:23,result:{repairResult:'Completed'}}});h.t.begin('SN');await flush();const html=h.node('#tcu-app').innerHTML;assert.match(html,status==='Completed'?/COMPLETED UNIT FOUND/:/UNIT MARKED FOR DISPOSAL/);assert.doesNotMatch(html,/<fieldset/);assert.match(html,/23/);if(status==='Completed'){assert.match(html,/CONFIRM CLIENT RETURN/);assert.match(html,/CLIENT RETURN COUNT/);}h.module.cleanup();
 });
+test('completed unit requires explicit client-return confirmation and Cancel performs no write',async()=>{const saved={phase:'completed',requestId:'visit-1234567890123456',recordId:'existing',unitId:'TCU-old',sn:'SN',entry:2,step:2,clientStatus:'Completed',previousLaborMinutes:23,clientReturnCount:1,latestClientReturnAt:Date.now()-1000,result:{repairResult:'Completed',completedAt:Date.now()-5000},data:{}};const h=setup(saved);assert.equal(h.calls.length,0);h.node('#tcu-open-client-return').onclick();assert.equal(h.node('#tcu-client-return-dialog').open,true);assert.equal(h.calls.length,0);assert.match(h.node('#tcu-app').innerHTML,/CONFIRMED BY/);h.node('#tcu-confirm-client-return').onclick();assert.equal(h.calls.length,0);assert.equal(h.node('#tcu-return-error').textContent,'Confirmed By is required.');h.module.cleanup();});
+test('confirmed completed-unit return posts the existing visit identity and opens Pre-QC',async()=>{const saved={phase:'completed',requestId:'visit-1234567890123456',recordId:'existing',unitId:'TCU-old',sn:'SN',entry:2,step:2,clientStatus:'Completed',previousLaborMinutes:23,clientReturnCount:0,result:{repairResult:'Completed'},data:{}};const h=setup(saved);h.window.MkiteApiClient.post=async(path,body)=>{h.calls.push({path,body});return {ok:true,data:{...saved,phase:'draft',resumed:true,step:0,entry:3,startedAt:Date.now(),clientStatus:'Pending',clientReturnCount:1,result:{returnId:'RET-001',repairId:'REP-001'},data:{totalPartsUsed:'0'}}};};h.node('#tcu-return-confirmed-by').value='ALGER';h.node('#tcu-confirm-client-return').onclick();await flush();assert.equal(h.calls[0].path,'/api/tineco-toc/client-return');assert.equal(h.calls[0].body.requestId,saved.requestId);assert.equal(h.calls[0].body.confirmedBy,'ALGER');assert.equal(h.saved.phase,'draft');assert.match(h.node('#tcu-app').innerHTML,/NEW CLIENT RETURN VISIT/);assert.match(h.node('#tcu-app').innerHTML,/CONTINUE TO REPAIR/);h.module.cleanup();});
+test('repair history renders collapsed and historical parts have no edit controls',()=>{const saved={phase:'draft',requestId:'visit-1234567890123456',recordId:'existing',unitId:'TCU-old',sn:'SN',entry:3,step:1,startedAt:Date.now(),clientStatus:'Pending',previousLaborMinutes:23,resumed:true,repairLevels:['Level 1'],repairHistory:{schemaVersion:1,repairs:[{repairId:'REP-001',visitNumber:1,entryNumber:2,completedAt:'2026-10-08T14:00:00.000Z',repairResult:'Completed',labor:{preQcMinutes:2,repairMinutes:5,finalQcMinutes:1,totalMinutes:8},finalQc:{result:'Pass',note:'Passed'},partsUsed:[{partSku:'Battery',quantity:1},{partSku:'Filter',quantity:2}]}]},repairHistoryCount:1,data:{partUsedDetail:'Current-Part',totalPartsUsed:'1',repairLevel:'Level 1'}};const h=setup(saved),html=h.node('#tcu-app').innerHTML;assert.match(html,/REPAIR HISTORY · 1 PREVIOUS REPAIR/);assert.match(html,/PARTS USED — HISTORICAL \/ READ ONLY/);assert.match(html,/Battery/);assert.match(html,/×2/);assert.equal((html.match(/data-remove-part=/g)||[]).length,1);assert.doesNotMatch(html,/data-remove-history/);h.module.cleanup();});
 test('next-step colors correspond to destination stage and Issue Found error unlocks editing',async()=>{
  const h=setup();h.t.begin('SN');await flush();assert.match(h.node('#tcu-app').innerHTML,/tcu-next-repair/);h.t.move(1);await flush();assert.match(h.node('#tcu-app').innerHTML,/tcu-next-final/);h.t.move(0);await flush();h.window.MkiteApiClient.post=async()=>({ok:false,error:{code:'ISSUE_FOUND_REQUIRED',message:'ISSUE FOUND is required.'}});h.t.move(1);await flush();assert.equal(h.saved.pending,undefined);assert.match(h.node('#tcu-app').innerHTML,/ISSUE_FOUND_REQUIRED/);assert.doesNotMatch(h.node('#tcu-app').innerHTML,/<fieldset disabled>/);h.module.cleanup();
 });
@@ -133,8 +136,8 @@ for(const step of [0,1,2])test(`lookup status presents existing Pending summary 
 for(const phase of ['completed','disposal'])test(`${phase} lookup status has distinct presentation`,async()=>{
  const h=setup();h.window.MkiteApiClient.post=async(_,body)=>({ok:true,data:{requestId:body.requestId,phase,sn:body.sn}});
  h.t.begin('SN');await flush();const html=statusHtml(h);
- assert.ok(html.includes(`is-${phase}`));assert.match(html,phase==='completed'?/Unit Already Completed/:/Unit Marked for Disposal/);
- assert.match(html,phase==='completed'?/cannot be reopened/:/not available for normal TOC/);
+ assert.ok(html.includes(`is-${phase}`));assert.match(html,phase==='completed'?/Completed Unit Found/:/Unit Marked for Disposal/);
+ assert.match(html,phase==='completed'?/Confirm a physical client return/:/not available for normal TOC/);
  assert.doesNotMatch(h.node('#tcu-app').innerHTML,/<fieldset/);
  h.node('#tcu-next-unit').onclick();assert.match(statusHtml(h),/Ready for SN/);h.module.cleanup();
 });
@@ -155,7 +158,7 @@ test('status layout stacks on tablet and honors reduced motion',()=>{
  const h=setup();assert.match(statusHtml(h),/role="status" aria-live="polite" aria-atomic="true"/);h.module.cleanup();
 });
 
-for(const [step,outcome] of [[0,'NFF'],[0,'Awaiting Parts'],[1,'Can Not Be Fixed'],[2,'Completed'],[2,'Final QC Fail']])test(`${outcome} shows live save status and locks mutations until authoritative success`,async()=>{
+for(const [step,outcome] of [[0,'NFF'],[0,'Awaiting Parts'],[1,'Awaiting Parts'],[1,'Can Not Be Fixed'],[2,'Completed'],[2,'Final QC Fail']])test(`${outcome} shows live save status and locks mutations until authoritative success`,async()=>{
  const h=setup();h.t.begin('SN');await flush();
  for(let to=1;to<=step;to++){h.t.move(to);await flush();}
  const normal=h.window.MkiteApiClient.post;let release;h.window.MkiteApiClient.post=(...args)=>new Promise(resolve=>{release=async()=>resolve(await normal(...args));});
@@ -254,6 +257,7 @@ test('client-confirmed disposal is a Final QC exit and retains removed parts and
  h.t.finish('Client Confirmed Disposal');assert.match(statusHtml(h),/Saving to Lark/);await flush();
  const input=h.calls.at(-1).body;assert.equal(input.outcome,'Client Confirmed Disposal');assert.equal(input.data.partUsedDetail,'Filter');assert.equal(input.data.finalQcNote,'Client approved disposal');h.module.cleanup();
 });
+test('Repair Awaiting Parts saves current work and shows Repair as the resumable step',async()=>{const h=setup();h.t.begin('SN');await flush();h.t.move(1);await flush();h.t.addPart('Part A');h.t.getSession().data.repairLevel='Level 1';assert.match(h.node('#tcu-app').innerHTML,/data-outcome="Awaiting Parts">AWAITING PARTS/);h.t.finish('Awaiting Parts');await flush();assert.equal(h.calls.at(-1).body.outcome,'Awaiting Parts');assert.equal(h.calls.at(-1).body.data.partUsedDetail,'Part A');assert.equal(h.calls.at(-1).body.data.repairLevel,'Level 1');assert.match(h.node('#tcu-app').innerHTML,/WAITING FOR PARTS/);assert.match(h.node('#tcu-app').innerHTML,/CURRENT STEP[\s\S]*Repair/);assert.match(h.node('#tcu-app').innerHTML,/START NEXT UNIT/);h.module.cleanup();});
 test('missing disposal note unlocks the form for correction',async()=>{
  const h=setup();h.t.begin('SN');await flush();h.t.move(1);await flush();h.t.move(2);await flush();
  h.window.MkiteApiClient.post=async()=>({ok:false,error:{code:'DISPOSAL_NOTE_REQUIRED',message:'Write disposal details'}});
@@ -262,14 +266,14 @@ test('missing disposal note unlocks the form for correction',async()=>{
 });
 
 async function inventorySetup(){const h=setup();h.t.begin('SN');await flush();h.t.move(1);await flush();const normal=h.window.MkiteApiClient.post;h.lookups=[];h.releases=[];h.window.MkiteApiClient.post=(path,body)=>{if(path!=='/api/inventory/lookup')return normal(path,body);h.lookups.push(structuredClone(body));return new Promise((resolve,reject)=>h.releases.push({resolve,reject}));};return h;}
-const location=(locationCode,availableQuantity)=>({locationCode,availableQuantity,warehouseCode:'MKS66',inventoryQuantity:999});
+const location=(locationCode,availableQuantity,inventoryQuantity=availableQuantity)=>({locationCode,availableQuantity,warehouseCode:'MKS66',inventoryQuantity});
 const lookupReply=(sku,locations)=>({ok:true,data:{ok:true,sku,total:locations.length,locations}});
 test('accepted SKU lookup uses shared helper, caches duplicate/inflight scans, preserves all locations and order',async()=>{
  const h=await inventorySetup();h.t.addPart('  Part/A  ');h.t.addPart('Part/A');
  assert.deepEqual(h.lookups,[{sku:'Part/A',warehouseCode:'MKS66'}]);assert.equal(h.saved.data.partUsedDetail,'Part/A\nPart/A');assert.match(h.t.inventoryHtml(),/Looking up inventory location/);assert.doesNotMatch(h.node('#tcu-app').innerHTML,/<fieldset disabled>/);
  h.releases[0].resolve(lookupReply('Part/A',[location('Z-LAST',1),location('<A-FIRST>',0),location('NULL',null)]));await flush();
- const html=h.t.inventoryHtml();assert.match(html,/Z-LAST<\/td><td>1/);assert.match(html,/&lt;A-FIRST&gt;<\/td><td>0/);assert.match(html,/NULL<\/td><td>—/);assert.ok(html.indexOf('Z-LAST')<html.indexOf('&lt;A-FIRST&gt;'));assert.doesNotMatch(html,/999|recommended|preferred|primary|best location/i);
- h.t.addPart('Part/A');assert.equal(h.lookups.length,1);assert.equal(h.saved.data.totalPartsUsed,'3');assert.doesNotMatch(JSON.stringify(h.saved),/Z-LAST|availableQuantity|locations|inventoryCache/);h.module.cleanup();
+ const html=h.t.inventoryHtml();assert.match(html,/Z-LAST<\/td><td>2 \/ 1/);assert.match(html,/&lt;A-FIRST&gt;<\/td><td>2 \/ 0/);assert.match(html,/NULL<\/td><td>2 \/ —/);assert.match(html,/tcu-stock-insufficient/);assert.ok(html.indexOf('Z-LAST')<html.indexOf('&lt;A-FIRST&gt;'));assert.doesNotMatch(html,/999|recommended|preferred|primary|best location/i);
+ h.t.addPart('Part/A');assert.equal(h.lookups.length,1);assert.equal(h.saved.data.totalPartsUsed,'3');assert.match(h.t.inventoryHtml(),/Z-LAST<\/td><td>3 \/ 1/);h.t.removePart(0);assert.match(h.t.inventoryHtml(),/Z-LAST<\/td><td>2 \/ 1/);assert.doesNotMatch(JSON.stringify(h.saved),/Z-LAST|availableQuantity|locations|inventoryCache/);h.module.cleanup();
 });
 test('empty and invalid parts do not lookup; two SKUs and removed parts remain isolated',async()=>{
  const h=await inventorySetup();h.t.addPart(' ');h.t.addPart('A\nB');assert.equal(h.lookups.length,0);
@@ -295,13 +299,15 @@ test('lookup completion preserves typed part input and cleanup isolates previous
  h.t.addPart('Q');const release=h.releases[1];h.module.cleanup();h.module.init(h.ctx);assert.equal(h.t.inventoryHtml(),'');release.resolve(lookupReply('Q',[location('OLD-MOUNT',1)]));await flush();assert.equal(h.t.inventoryHtml(),'');h.module.cleanup();
 });
 test('advisory location tables use semantic headings and narrow-screen wrapping',()=>{
- const css=fs.readFileSync('css/client-tools/tineco-toc.css','utf8'),js=fs.readFileSync('js/client-tools/tineco-toc/tineco-toc.js','utf8');assert.match(css,/\.tcu-inventory-part table \{[^}]*width:100%[^}]*min-width:0[^}]*table-layout:fixed/);assert.match(css,/\.tcu-inventory-part th,\.tcu-inventory-part td \{[^}]*overflow-wrap:anywhere/);assert.match(js,/scope="col">LOCATION/);assert.match(js,/scope="col">AVAILABLE/);assert.match(js,/id="tcu-inventory-results" aria-live="polite"/);
+ const css=fs.readFileSync('css/client-tools/tineco-toc.css','utf8'),js=fs.readFileSync('js/client-tools/tineco-toc/tineco-toc.js','utf8');assert.match(css,/\.tcu-inventory-part table \{[^}]*width:100%[^}]*min-width:0[^}]*table-layout:fixed/);assert.match(css,/\.tcu-inventory-part th,\.tcu-inventory-part td \{[^}]*overflow-wrap:anywhere/);assert.match(js,/scope="col">LOCATION/);assert.match(js,/scope="col">NEEDED \/ ACTUAL/);assert.match(js,/id="tcu-inventory-results" aria-live="polite"/);
 });
+test('Repair displays physical inventoryQuantity rather than availableQuantity and aggregates duplicate locations',async()=>{const h=await inventorySetup();h.t.addPart('9FWRU1D00US');h.releases[0].resolve(lookupReply('9FWRU1D00US',[location('ZONE1-RACK02-05-B01',1,6),location('66-MKS-PART-USED',1,1),location('CS-PART-STORAGE-04',1,10),location('66-MKS-PART-USED',1,3)]));await flush();const html=h.t.inventoryHtml();assert.match(html,/ZONE1-RACK02-05-B01<\/td><td>1 \/ 6/);assert.match(html,/66-MKS-PART-USED<\/td><td>1 \/ 4/);assert.match(html,/CS-PART-STORAGE-04<\/td><td>1 \/ 10/);assert.equal((html.match(/66-MKS-PART-USED/g)||[]).length,1);assert.doesNotMatch(html,/1 \/ 2/);h.module.cleanup();});
+test('Needed uses current visit only, keeps distinct locations, and excludes repair history',async()=>{const h=await inventorySetup();h.t.getSession().repairHistory={schemaVersion:1,repairs:[{repairId:'REP-001',partsUsed:[{partSku:'P',quantity:5}]}]};h.t.addPart('P');h.releases[0].resolve(lookupReply('P',[location('A',10),location('B',3)]));await flush();const html=h.t.inventoryHtml();assert.match(html,/A<\/td><td>1 \/ 10/);assert.match(html,/B<\/td><td>1 \/ 3/);assert.doesNotMatch(html,/6 \/ 10/);h.module.cleanup();});
 
 test('real shared API helper unwraps inventory endpoint top-level contract',async()=>{
  const h=await inventorySetup();h.window.MkiteApiConfig={baseUrl:'http://127.0.0.1:8787'};h.window.fetch=async(url,init)=>{
   assert.equal(url,'http://127.0.0.1:8787/api/inventory/lookup');assert.deepEqual(JSON.parse(init.body),{sku:'9FWPT011100',warehouseCode:'MKS66'});assert.deepEqual(Object.keys(init.headers),['Content-Type']);
   return {ok:true,status:200,json:async()=>({ok:true,sku:'9FWPT011100',total:1,locations:[location('FROM-API',3)]})};
  };
- vm.runInNewContext(fs.readFileSync('js/services/api-client.js','utf8'),{window:h.window});h.t.addPart('9FWPT011100');await flush();assert.match(h.node('#tcu-inventory-results').innerHTML,/FROM-API<\/td><td>3/);h.module.cleanup();
+ vm.runInNewContext(fs.readFileSync('js/services/api-client.js','utf8'),{window:h.window});h.t.addPart('9FWPT011100');await flush();assert.match(h.node('#tcu-inventory-results').innerHTML,/FROM-API<\/td><td>1 \/ 3/);h.module.cleanup();
 });
