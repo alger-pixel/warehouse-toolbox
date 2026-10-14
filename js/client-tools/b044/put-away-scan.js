@@ -133,7 +133,7 @@
     return `<img data-pas-qr src="${source}" alt="QR code for ${esc(value)}">`;
   }
   function labelMarkup(item, preview) {
-    return `<article class="pas-label${preview ? " is-preview" : ""}"><header><div><span>到仓日期</span><strong>${esc(item.arrivalDate)}</strong></div><div><span>跟踪号</span><strong>${esc(item.trackingNumber)}</strong></div></header><section class="pas-label-section"><h3>SKU</h3><div class="pas-qr">${qrImage(item.finalSku)}</div><strong>${esc(item.finalSku)}</strong></section><section class="pas-label-section"><h3>仓库入库单号</h3><div class="pas-qr">${qrImage(item.warehouseInboundOrder)}</div><strong>${esc(item.warehouseInboundOrder)}</strong></section></article>`;
+    return `<article class="pas-label${preview ? " is-preview" : ""}" data-label-page="package"><header><div><span>到仓日期</span><strong>${esc(item.arrivalDate)}</strong></div><div><span>跟踪号</span><strong>${esc(item.trackingNumber)}</strong></div></header><section class="pas-label-section"><h3>SKU</h3><div class="pas-qr">${qrImage(item.finalSku)}</div><strong>${esc(item.finalSku)}</strong></section><section class="pas-label-section"><h3>仓库入库单号</h3><div class="pas-qr">${qrImage(item.warehouseInboundOrder)}</div><strong>${esc(item.warehouseInboundOrder)}</strong></section></article>`;
   }
 
   // Layout in points: 4x6 inches, with the same .19in inset as the package label.
@@ -188,7 +188,7 @@
   }
   function commandLabelMarkup(item, preview) {
     const pages=commandPages(item);
-    return pages.map((page,i)=>`${preview?`<figure class="pas-label-preview"><figcaption>Command Label${pages.length>1?' '+(i+1)+'/'+pages.length:''}</figcaption>`:''}<article class="pas-label pas-command-label${preview?' is-preview':''}"><h2>COMMAND${pages.length>1?' '+(i+1)+'/'+pages.length:''}</h2><dl class="pas-command-identity" style="--command-identity-size:${page.identitySize}pt"><div><dt>跟踪号 / TRACKING:</dt><dd>${esc(page.tracking)}</dd></div><div><dt>入库单号 / WAREHOUSE ORDER:</dt><dd>${esc(page.order)}</dd></div></dl><div class="pas-command-content" style="font-size:${page.size}pt">${page.text?`<pre>${esc(page.text)}</pre>`:''}${page.reference?`<section class="pas-command-reference"><strong>REF:</strong><pre>${esc(page.reference)}</pre></section>`:''}</div></article>${preview?'</figure>':''}`).join('');
+    return pages.map((page,i)=>`${preview?`<figure class="pas-label-preview"><figcaption>Command Label${pages.length>1?' '+(i+1)+'/'+pages.length:''}</figcaption>`:''}<article class="pas-label pas-command-label${preview?' is-preview':''}" data-label-page="command"><h2>COMMAND${pages.length>1?' '+(i+1)+'/'+pages.length:''}</h2><dl class="pas-command-identity" style="--command-identity-size:${page.identitySize}pt"><div><dt>跟踪号 / TRACKING:</dt><dd>${esc(page.tracking)}</dd></div><div><dt>入库单号 / WAREHOUSE ORDER:</dt><dd>${esc(page.order)}</dd></div></dl><div class="pas-command-content" style="font-size:${page.size}pt">${page.text?`<pre>${esc(page.text)}</pre>`:''}${page.reference?`<section class="pas-command-reference"><strong>REF:</strong><pre>${esc(page.reference)}</pre></section>`:''}</div></article>${preview?'</figure>':''}`).join('');
   }
   function packageLabels(item,preview) { const original=labelMarkup(item,preview);return (preview?`<figure class="pas-label-preview"><figcaption>Package Label</figcaption>${original}</figure>`:original)+commandLabelMarkup(item,preview); }
   async function prepareCommands(retry=false) {
@@ -417,16 +417,41 @@
     item.printStatus = reprint || item.printCount > 1 ? STATUS.REPRINTED : STATUS.PRINTED;
     item.lastPrintedAt = new Date().toISOString(); save();
   }
+  function printDocument(markup) {
+    return `<!doctype html><html><head><meta charset="utf-8"><title>B044 Labels</title><style>
+      @page{size:4in 6in;margin:0}
+      *{box-sizing:border-box}
+      html,body{width:4in;min-width:0;min-height:0;margin:0;padding:0;overflow:visible;background:#fff}
+      body{color:#000;font-family:Arial,sans-serif;transform:none;zoom:1}
+      #pas-print-root{display:block;width:4in;margin:0;padding:0;overflow:visible;transform:none}
+      .pas-label{display:block;width:4in;height:6in;min-width:4in;max-width:4in;min-height:6in;max-height:6in;margin:0;padding:.19in;overflow:hidden;background:#fff;color:#000;break-inside:avoid-page;page-break-inside:avoid;break-after:page;page-break-after:always;transform:none;zoom:1}
+      .pas-label:last-child{break-after:auto;page-break-after:auto}
+      .pas-label header{display:grid;grid-template-columns:.8fr 1.6fr;gap:.12in;padding-bottom:.12in;border-bottom:2px solid #000}
+      .pas-label header div{display:flex;min-width:0;flex-direction:column;gap:.04in}
+      .pas-label header span,.pas-label-section h3{font-size:10pt;font-weight:700;letter-spacing:.02em}
+      .pas-label header strong{overflow-wrap:anywhere;font-size:13pt}
+      .pas-label-section{display:flex;height:2.48in;align-items:center;justify-content:center;flex-direction:column;border-bottom:2px solid #000;text-align:center}
+      .pas-label-section:last-child{border-bottom:0}.pas-label-section h3{align-self:flex-start;margin:0}.pas-label-section>strong{max-width:100%;font-size:15pt;line-height:1.15;overflow-wrap:anywhere}
+      .pas-qr{width:1.62in;height:1.62in;margin:.04in auto;background:#fff}.pas-qr img{display:block;width:100%;height:100%;object-fit:contain;shape-rendering:crispEdges}.pas-qr-error{display:grid;height:100%;place-items:center;border:2px solid #000;font-weight:700}
+      .pas-command-label{display:flex;flex-direction:column;min-height:6in;padding:.19in;text-align:left}.pas-command-label h2{flex:none;font:bold 26pt/1.1 Arial,sans-serif;margin:0 0 8pt}
+      .pas-command-identity{flex:none;margin:0 0 8pt;padding:0 0 7pt;border-bottom:2px solid #000}.pas-command-identity>div+div{margin-top:6pt}.pas-command-identity dt{font:bold 10pt/1.15 Arial,sans-serif;margin:0 0 2pt}.pas-command-identity dd{font:700 var(--command-identity-size,14pt)/1.15 Arial,sans-serif;margin:0;white-space:pre-wrap;overflow-wrap:break-word}
+      .pas-command-content{flex:none;font-family:Arial,sans-serif;font-weight:700;line-height:1.15;text-align:left}.pas-command-content pre{font:inherit;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;margin:0}.pas-command-reference{margin:0;padding:0}.pas-command-reference strong{display:block;font:inherit}
+    </style></head><body><main id="pas-print-root">${markup}</main></body></html>`;
+  }
   const printService = {
     renderPrintDom(items) {
-      let host = document.getElementById("pas-print-host");
-      if (!host) { host = document.createElement("div"); host.id = "pas-print-host"; document.body.appendChild(host); }
-      host.innerHTML = items.map((item) => packageLabels(item, false)).join("");
-      document.body.classList.add("pas-printing");
-      return host;
+      document.getElementById("pas-print-frame")?.remove();
+      const frame = document.createElement("iframe");
+      frame.id = "pas-print-frame"; frame.setAttribute("aria-hidden", "true");
+      frame.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;pointer-events:none";
+      document.body.appendChild(frame);
+      const printDoc = frame.contentDocument;
+      printDoc.open(); printDoc.write(printDocument(items.map((item) => packageLabels(item, false)).join(""))); printDoc.close();
+      return frame;
     },
-    async ready(host) {
-      const images = Array.from(host.querySelectorAll?.("img[data-pas-qr]") || []);
+    async ready(frame) {
+      const printDoc = frame.contentDocument;
+      const images = Array.from(printDoc.querySelectorAll("img[data-pas-qr]"));
       await Promise.all(images.map((image) => {
         if (image.complete && image.naturalWidth > 0) return undefined;
         if (typeof image.decode === "function") return image.decode();
@@ -435,17 +460,17 @@
           image.addEventListener("error", reject, { once: true });
         });
       }));
-      if (document.fonts?.ready) await document.fonts.ready;
+      if (printDoc.fonts?.ready) await printDoc.fonts.ready;
       await new Promise((resolve) => {
         if (typeof window.requestAnimationFrame !== "function") { window.setTimeout(resolve, 0); return; }
         window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
       });
     },
     async requestPrint(items, afterPrint) {
-      const host = this.renderPrintDom(items);
-      try { await this.ready(host); window.print(); }
+      const frame = this.renderPrintDom(items);
+      try { await this.ready(frame); frame.contentWindow.focus(); frame.contentWindow.print(); }
       finally {
-        document.body.classList.remove("pas-printing"); host.innerHTML = "";
+        frame.remove();
         if (afterPrint) afterPrint();
       }
     },
@@ -674,8 +699,8 @@
   const module = {
     render,
     init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; startLocationLookup(); restore(); renderSetup(); reconcilePickingList(); },
-    cleanup() { locationLookup?.dispose(); locationLookup=null; adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.body.classList.remove("pas-printing"); document.getElementById("pas-print-host")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
-    _test: { inventoryPrintSnapshot, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, qrSvg, qrImage, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
+    cleanup() { locationLookup?.dispose(); locationLookup=null; adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.getElementById("pas-print-frame")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
+    _test: { inventoryPrintSnapshot, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, qrSvg, qrImage, printDocument, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
   };
   window.MkiteClientToolModules["b044.put-away-scan"] = module;
 }(window, document));

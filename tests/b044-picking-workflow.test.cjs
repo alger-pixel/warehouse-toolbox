@@ -9,7 +9,7 @@ function setup(operational = true) {
     if (!nodes.has(id)) nodes.set(id, { innerHTML: '', value: '', addEventListener() {}, focus() {}, remove() {} });
     return nodes.get(id);
   };
-  const document = { getElementById: node, querySelectorAll: () => [], body: { classList: { add() {}, remove() {} } } };
+  const document = { getElementById: node, querySelectorAll: () => [], createElement(tag) { if(tag==='canvas')return {getContext:()=>null};const printDoc={open(){},write(){},close(){},querySelectorAll:()=>[]};return {style:{},setAttribute(){},contentDocument:printDoc,contentWindow:{focus(){},print(){}},remove(){}}; }, body: { classList: { add() {}, remove() {} }, appendChild() {} } };
   const row = { id: 'row-2', trackingNumber: 'TRACK1', normalizedTracking: 'TRACK1', finalSku: 'B044-001', packageRecordId: 'rec1', printCount: 0, printStatus: 'NOT PRINTED' };
   let saved = { file: { name: 'test.xlsx' }, packages: [row], invalidRows: [], pl: { operational, pickingListNumber: 'B044-PL-20260907-0001', pickingListRecordId: 'pl1', packages: [row], succeeded: ['rec1'], failed: [] } };
   const root = { innerHTML: '', querySelectorAll: () => [] };
@@ -422,28 +422,40 @@ test('thermal QR markup is self-contained and preserves the exact two label payl
 test('print waits for QR decode, fonts and two painted frames before opening the dialog',async()=>{
  const h=setup(),events=[],frames=[];
  const image={complete:false,naturalWidth:0,decode:async()=>events.push('qr')};
- const host={innerHTML:'',querySelectorAll:()=>[image]};
- h.tool.printService.renderPrintDom=()=>host;
+ const printDoc={querySelectorAll:()=>[image],fonts:{ready:Promise.resolve().then(()=>events.push('fonts'))}};
+ const frame={contentDocument:printDoc,contentWindow:{focus:()=>events.push('focus'),print:()=>events.push('print')},remove:()=>events.push('remove')};
+ h.tool.printService.renderPrintDom=()=>frame;
  h.window.requestAnimationFrame=callback=>frames.push(callback);
- h.window.print=()=>events.push('print');
  let fontsResolved=false;
- h.document.fonts={ready:Promise.resolve().then(()=>{fontsResolved=true;events.push('fonts');})};
+ printDoc.fonts.ready=printDoc.fonts.ready.then(()=>{fontsResolved=true;});
  const request=h.tool.printService.requestPrint([h.tool.currentQueue()[0]]);
- await h.document.fonts.ready;await new Promise(resolve=>setImmediate(resolve));
+ await printDoc.fonts.ready;await new Promise(resolve=>setImmediate(resolve));
  assert.equal(events.includes('print'),false);assert.equal(frames.length,1);assert.equal(fontsResolved,true);
  frames.shift()();assert.equal(frames.length,1);assert.equal(events.includes('print'),false);
- frames.shift()();await request;assert.deepEqual(events.filter(value=>value!=='fonts'),['qr','print']);
- assert.equal(host.innerHTML,'');
+ frames.shift()();await request;assert.deepEqual(events.filter(value=>value!=='fonts'),['qr','focus','print','remove']);
 });
 
-test('GitHub Pages assets remain repository-relative and print CSS owns exact 4x6 pagination',()=>{
- const index=fs.readFileSync('index.html','utf8'),css=fs.readFileSync('css/client-tools/b044-put-away-scan.css','utf8');
+test('dedicated print document isolates authoritative 4x6 geometry from application and A4 rules',()=>{
+ const h=setup();h.window.qrcode=()=>({addData(){},make(){},createSvgTag(){return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></svg>';}});
+ const row={...h.tool.currentQueue()[0],commandRaw:'换箱',commandDisplay:'换箱'},html=h.tool.printDocument(h.tool.packageLabels(row,false));
+ assert.equal((html.match(/data-label-page=/g)||[]).length,2);assert.match(html,/data-label-page="package"/);assert.match(html,/data-label-page="command"/);
+ assert.equal((html.match(/data-pas-qr/g)||[]).length,2);assert.match(html,/<main id="pas-print-root">/);
+ assert.match(html,/@page\{size:4in 6in;margin:0\}/);assert.match(html,/html,body\{width:4in;[^}]*margin:0;padding:0;overflow:visible/);
+ assert.match(html,/#pas-print-root\{display:block;width:4in;[^}]*transform:none/);
+ assert.match(html,/\.pas-label\{[^}]*width:4in;height:6in;[^}]*max-width:4in;[^}]*max-height:6in;[^}]*transform:none;zoom:1/);
+ assert.match(html,/\.pas-label:last-child\{break-after:auto;page-break-after:auto\}/);
+ assert.doesNotMatch(html,/A4|landscape|is-preview|aspect-ratio|scale\(/);
+ const normal=h.tool.printDocument(h.tool.packageLabels({...row,commandRaw:'',commandDisplay:''},false));assert.equal((normal.match(/data-label-page=/g)||[]).length,1);
+ const index=fs.readFileSync('index.html','utf8'),otherPrintCss=fs.readFileSync('css/in-house-tools/part-used-inventory-count.css','utf8');
+ assert.ok(index.indexOf('b044-put-away-scan.css')<index.indexOf('part-used-inventory-count.css'));assert.match(otherPrintCss,/@page\{size:A4 landscape/);
+});
+
+test('GitHub Pages assets remain repository-relative and B044 printing does not load external assets',()=>{
+ const h=setup();h.window.qrcode=()=>({addData(){},make(){},createSvgTag(){return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></svg>';}});
+ const index=fs.readFileSync('index.html','utf8'),html=h.tool.printDocument(h.tool.packageLabels(h.tool.currentQueue()[0],false));
  assert.match(index,/src="vendor\/qrcode\.min\.js"/);assert.match(index,/src="js\/client-tools\/b044\/put-away-scan\.js"/);
  assert.doesNotMatch(index,/src="\/vendor\/qrcode\.min\.js"|src="\/js\/client-tools\/b044\/put-away-scan\.js"/);
- assert.match(css,/@page \{ size:4in 6in; margin:0; \}/);
- assert.match(css,/body\.pas-printing \{[^}]*width:4in!important;[^}]*margin:0!important;[^}]*padding:0!important/);
- assert.match(css,/body\.pas-printing #pas-print-host \{[^}]*width:4in; margin:0; padding:0/);
- assert.match(css,/\.pas-label:last-child \{ break-after:auto; page-break-after:auto; \}/);
+ assert.doesNotMatch(html,/<link|https?:|src="\//);assert.match(html,/data:image\/svg\+xml;charset=utf-8,/);
 });
 
 test('deterministic preparation preserves distinct codes, excludes FD references and aggregates per package mentions',()=>{
