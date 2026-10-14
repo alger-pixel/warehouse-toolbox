@@ -6,7 +6,8 @@
   const REQUIRED_HEADERS = ["到仓日期", "跟踪号", "入库SKU", "仓库入库单号"];
   const SUPPORTED_ORDER_PREFIXES = ["RMA", "RV"].sort((a, b) => b.length - a.length);
   const STATUS = { NOT_PRINTED: "NOT PRINTED", PRINTED: "PRINTED", REPRINTED: "REPRINTED" };
-  const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, commandCache: [], pendingPackageId: null, pendingConfirmationTracking: null, creationRequestId: null });
+  const emptyProgress = () => ({ active: false, operation: '', stage: '', completed: 0, total: 0, percent: 0, message: '', indeterminate: false, error: '' });
+  const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, commandCache: [], pendingPackageId: null, pendingConfirmationTracking: null, creationRequestId: null, progress: emptyProgress() });
   let adminRecoveryKey = '';
   let context = null;
   let state = emptySession();
@@ -23,6 +24,23 @@
 
   function text(value) { return String(value == null ? "" : value).trim(); }
   function normalize(value) { return text(value).toLocaleUpperCase(); }
+  function setProgress({ operation = state.progress?.operation || 'GENERATING PICKING LIST', stage, completed = 0, total = 0, message = '', indeterminate = false, active = true, error = '' }) {
+    const safeTotal = Math.max(0, Number.isFinite(Number(total)) ? Number(total) : 0);
+    const safeCompleted = Math.max(0, Number.isFinite(Number(completed)) ? Number(completed) : 0);
+    const percent = safeTotal > 0 ? Math.max(0, Math.min(100, Math.round(safeCompleted / safeTotal * 100))) : 0;
+    state.progress = { active, operation: text(operation), stage: text(stage), completed: safeCompleted, total: safeTotal, percent, message: text(message), indeterminate: Boolean(indeterminate), error: text(error) };
+    save();
+    if (context) renderSetup();
+    return state.progress;
+  }
+  function clearProgress() { state.progress = emptyProgress(); save(); }
+  function progressMarkup() {
+    const progress = state.progress;
+    if (!progress?.active) return '';
+    const value = progress.indeterminate ? '' : `<strong>${progress.percent}%</strong>`;
+    const detail = progress.message || (!progress.indeterminate && progress.total ? `${progress.completed} of ${progress.total} packages processed` : 'Keep this session open.');
+    return `<section class="pas-generation-progress${progress.indeterminate ? ' is-indeterminate' : ''}" aria-label="Picking List operation progress" aria-live="polite"><div class="pas-progress-heading"><strong>${esc(progress.operation || 'GENERATING PICKING LIST')}</strong>${value}</div><div class="pas-progress-track" role="progressbar"${progress.indeterminate ? '' : ` aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent}"`}><span${progress.indeterminate ? '' : ` style="--pas-progress:${progress.percent}%"`}></span></div>${progress.stage ? `<p class="pas-progress-stage">${esc(progress.stage)}</p>` : ''}<p>${esc(detail)}</p></section>`;
+  }
 
   function parseOrderNumber(value) {
     const order = text(value);
@@ -199,6 +217,8 @@
       const key=text(row.commandRaw); if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);
     }
     const pending=[...groups].filter(([key,rows])=>retry?['FAILED','FALLBACK'].includes(cache.get(key)?.commandAiStatus||rows[0].commandAiStatus):!cache.has(key)).slice(0,10);
+    let progressCompleted=0;
+    if(pending.length)setProgress({stage:'PREPARING COMMAND INSTRUCTIONS',completed:0,total:pending.length,message:`0 of ${pending.length} command instructions processed`});
     for(const [,rows] of pending)for(const row of rows)row.commandAiStatus='PENDING';
     if(pending.length){save();renderSetup();}
     let cursor=0;
@@ -209,7 +229,7 @@
       }catch{}finally{window.clearTimeout?.(timer);}
       if(!context||run!==lifecycle||state!==session)return;
       cache.set(key,result||{commandAiStatus:'FALLBACK',commandAiSource:'RAW_FALLBACK'});session.commandCache=[...cache];
-      for(const row of rows)Object.assign(row,cache.get(key),{commandDisplay:result?.commandDisplay||row.commandRaw});save();renderSetup();
+      for(const row of rows)Object.assign(row,cache.get(key),{commandDisplay:result?.commandDisplay||row.commandRaw});progressCompleted+=1;setProgress({stage:'PREPARING COMMAND INSTRUCTIONS',completed:progressCompleted,total:pending.length,message:`${progressCompleted} of ${pending.length} command instructions processed`});
     }}
     await Promise.all([worker(),worker()]);
     if(!context||run!==lifecycle||state!==session)return;
@@ -233,6 +253,10 @@
     const totals = counts();
     const ready = usablePickingList();
     const completed = currentQueue().filter(item => item.completedAt || item.packageStatus === "Processed").length;
+    const executionStatus = state.pl?.phase === "cancelled" ? "Reset Page to prepare a new Picking List."
+      : state.pl?.phase === "cancelling" ? "Cancellation is in progress. Scan & Print remains locked."
+      : ["blocked", "reconciling"].includes(state.pl?.phase) && state.workflowError ? state.workflowError
+      : "Scan mode unlocks once your picking list is created and all eligible packages are assigned.";
     context.root.innerHTML = `<div class="pas-app" data-client-theme="blue">
       <section class="pas-workflow-step pas-preparation" aria-labelledby="pas-preparation-title">
         <header class="pas-step-header"><span class="pas-step-number" aria-hidden="true">01</span><div><h2 id="pas-preparation-title">STEP 1 · PICKING LIST PREPARATION</h2><p>Upload your package data, review inventory matches, and prepare the A4 picking list.</p></div></header>
@@ -243,7 +267,7 @@
       </section>
       <section class="pas-workflow-step pas-execution${ready ? " is-ready" : ""}" aria-labelledby="pas-execution-title">
         <header class="pas-step-header"><span class="pas-step-number" aria-hidden="true">02</span><div><h2 id="pas-execution-title">STEP 2 · SCAN &amp; PRINT EXECUTION</h2><p>Scan the package tracking number to print its label. For commanded packages, scan actual parts first. Confirm completion by scanning the same In-House SKU / Tracking again.</p></div></header>
-        <div class="pas-step-content"><div class="pas-execution-status" role="status"><strong>${ready ? "Ready for Scan &amp; Print" : (state.pl?.phase === "cancelled" ? "PICKING LIST CANCELLED · LOCKED" : "Complete Picking List Preparation first")}</strong><span>${ready ? `Picking list ${esc(state.pl.pickingListNumber)} · ${completed} / ${state.pl.packages.length} packages completed` : (state.pl?.phase === "cancelled" ? "Reset Page to prepare a new Picking List." : state.pl?.phase === "cancelling" ? "Cancellation is in progress. Scan & Print remains locked." : "Scan mode unlocks once your picking list is created and all eligible packages are assigned.")}</span></div>
+        <div class="pas-step-content"><div class="pas-execution-status" role="status"><strong>${ready ? "Ready for Scan &amp; Print" : (state.pl?.phase === "cancelled" ? "PICKING LIST CANCELLED · LOCKED" : "Complete Picking List Preparation first")}</strong><span>${ready ? `Picking list ${esc(state.pl.pickingListNumber)} · ${completed} / ${state.pl.packages.length} packages completed` : esc(executionStatus)}</span></div>
         ${state.file ? `<div class="pas-overview pas-execution-stats">${stat("PL labels printed", totals.printed, "success")}${stat("Found packages remaining", totals.remaining)}${stat("Found packages", currentQueue().length)}${stat("PL packages completed", completed, "success")}</div>
         <div class="pas-actions pas-execution-actions"><div class="pas-action-feature"><button class="button button-primary pas-scan-start" id="pas-start-scan" type="button"${ready && !operationBusy ? "" : " disabled"}>Start Scan &amp; Print Mode</button><small>Continuous scan-to-print on kiosk-configured warehouse stations.</small></div><div class="pas-manual-actions"><div class="pas-action-feature"><button class="button button-secondary" id="pas-print-all" type="button"${currentQueue().length && !state.pendingPackageId ? "" : " disabled"}>PRINT FOUND PACKAGES</button><small>Print labels only for packages assigned to this Picking List.</small></div><button class="button button-secondary" id="pas-preview" type="button"${currentQueue().length ? "" : " disabled"}>PREVIEW FOUND PACKAGES</button></div></div>
         <div class="pas-operational-area"><div class="pas-area-heading"><h3>Package labels &amp; execution reference</h3><p>Only found, eligible packages assigned to the current Picking List are shown here.</p></div>${packageTable()}</div>` : '<div class="pas-empty"><strong>Your execution workspace</strong><span>Upload package data in Step 1 to see label controls and generated packages here.</span></div>'}</div>
@@ -347,8 +371,11 @@
       }
       if (result.cancellationAllowed === true && /CANCEL_PROCESSED_BLOCKED/.test(state.workflowError || '')) state.workflowError = '';
       save();
+      if (scanModeOpen) renderScanMode(); else renderSetup();
+      return result;
     } catch (error) { if (context && run === lifecycle) state.workflowError = 'Reconciliation required: ' + error.message; }
     if (context && run === lifecycle) { if (scanModeOpen) renderScanMode(); else renderSetup(); }
+    return null;
   }
   function isTerminalPickingList() {
     const pl = state.pl;
@@ -387,18 +414,35 @@
     if (!context || operationBusy || !state.pl?.pickingListRecordId) return;
     if (state.pl.packages.some(r => r.packageStatus === 'Processed')) { context.toast.show('Cancellation blocked: a package is completed.'); return; }
     if (!window.confirm('Cancel this Picking List? No package may be Processed. Processing packages will return to Active and temporary parts will be discarded.')) return;
+    const total = state.pl.packages.length, resumed = state.pl.phase === 'cancelling' && Number.isInteger(state.pl.cancelPendingCount);
     state.pl.phase = 'cancelling'; state.pl.operational = false; save();
-    operationBusy = true; state.workflowError = ''; renderSetup(); const run = lifecycle;
+    operationBusy = true; state.workflowError = '';
+    if (resumed) { const completed = Math.max(0, total - state.pl.cancelPendingCount); setProgress({operation:'CANCELLING PICKING LIST',stage:'Releasing assigned packages...',completed,total,message:`${completed} of ${total} package assignments processed`}); }
+    else setProgress({operation:'CANCELLING PICKING LIST',stage:'Validating package ownership...',message:'Releasing package assignments...',indeterminate:true});
+    const run = lifecycle;
     try {
       do {
         const result = await window.MkiteB044Picking.cancel({ pickingListNumber: state.pl.pickingListNumber, requestId: state.creationRequestId || state.pl.requestId });
         if (!context || run !== lifecycle) return;
-        state.pl = result; state.temporaryParts = null; state.pendingPackageId = null; state.pendingConfirmationTracking = null; scanState = { type: "ready", scan: "", candidateIds: [] }; save();
+        state.pl = result; state.temporaryParts = null; state.pendingPackageId = null; state.pendingConfirmationTracking = null; scanState = { type: "ready", scan: "", candidateIds: [] };
+        const completed = result.phase === 'cancelled' ? total : Math.max(0, total - (result.cancelPendingCount || 0));
+        setProgress({operation:'CANCELLING PICKING LIST',stage:result.phase === 'cancelled'?'Finalizing...':'Releasing assigned packages...',completed,total,message:result.phase === 'cancelled'?'Picking List cancelled':`${completed} of ${total} package assignments processed`});
       } while (state.pl.phase === 'cancelling' && state.pl.cancelPendingCount > 0);
+      if(state.pl.phase === 'cancelled'){await new Promise(resolve=>(window.requestAnimationFrame||((callback)=>Promise.resolve().then(callback)))(resolve));clearProgress();}
     } catch (error) {
       if (context && run === lifecycle) {
+        if(state.progress?.percent===100)state.progress.percent=99;state.progress.active=false;state.progress.error=error.message;
         state.workflowError = error.message;
         if (error.code === 'CANCEL_PROCESSED_BLOCKED') { state.pl.phase = 'operational'; state.pl.operational = true; await reconcilePickingList(); }
+        else if (['PACKAGE_STATE_CONFLICT','PL_MASTER_CHANGED','PL_NOT_FOUND','PL_NOT_OPERATIONAL'].includes(error.code)) {
+          state.pl.phase = 'reconciling'; state.pl.operational = false; save();
+          const conflict = error.message, refreshed = await reconcilePickingList();
+          if (refreshed) {
+            const executable = refreshed.executionAllowed === true && refreshed.packages.every(row => row.ownershipValid === true && ['Processing','Processed'].includes(row.packageStatus));
+            state.pl.phase = executable ? 'operational' : 'blocked'; state.pl.operational = executable;
+            state.workflowError = executable ? `Cancellation blocked: ${conflict} Current Picking List state has been refreshed.` : `Cancellation blocked: ${conflict} Refreshed package ownership or status does not permit Scan & Print.`;
+          } else state.workflowError = `Cancellation blocked: ${conflict} Authoritative Picking List refresh failed; Scan & Print remains locked.`;
+        }
         save();
       }
     } finally { if (context && run === lifecycle) { operationBusy = false; renderSetup(); } }
@@ -658,7 +702,8 @@
     const prepared = state.prepared, pl = state.pl;
     const created = Boolean(pl?.pickingListRecordId), cancelled = pl?.phase === 'cancelled';
     const lifecycleStatus = !cancelled && isTerminalPickingList() ? 'PICKING LIST COMPLETED' : cancelled ? 'PICKING LIST CANCELLED' : pl?.operational ? 'PICKING LIST CREATED' : prepared?.eligible.length && !state.creationRequestId ? 'READY TO GENERATE' : 'PREPARING';
-    return `<section class="pas-picking-panel panel" aria-live="polite"><h3>${lifecycleStatus}</h3>${pl?.packages?.some(r => r.reconciliationRequired) ? '<p role="status">SAVE PENDING / RECONCILIATION REQUIRED — Processed packages are counted below. Scan the affected tracking number to recover the pending save.</p>' : ''}${pl?.packages?.filter(r => r.reconciliationRequired && r.commandRaw).map(r => `<p>${esc(r.trackingNumber)} · PACKAGE STATUS: ${esc(r.packageStatus)} · PART USED SAVE PENDING</p>`).join('') || ''}${commandSummary()}${possiblePartsMarkup(pl?.packages || prepared?.eligible || [])}<p>${operationBusy ? 'Working — keep this session open…' : esc(state.workflowError || (!cancelled && pl?.message) || (pl?.operational ? 'Picking List ready for warehouse scanning.' : cancelled ? `${pl.processingReturnedToActive || 0} unfinished packages returned to Active. ${pl.processedRetained || 0} completed packages remain Processed. ${pl.skipped || 0} packages skipped due to unexpected status. Reset the page to prepare a new Picking List.` : 'Upload and matching are read-only. Generate explicitly to assign eligible packages.'))}</p>
+    const majorProgress = ['GENERATING PICKING LIST','CANCELLING PICKING LIST'].includes(state.progress?.operation);
+    return `<section class="pas-picking-panel panel" aria-live="polite"><h3>${lifecycleStatus}</h3>${progressMarkup()}${pl?.packages?.some(r => r.reconciliationRequired) ? '<p role="status">SAVE PENDING / RECONCILIATION REQUIRED — Processed packages are counted below. Scan the affected tracking number to recover the pending save.</p>' : ''}${pl?.packages?.filter(r => r.reconciliationRequired && r.commandRaw).map(r => `<p>${esc(r.trackingNumber)} · PACKAGE STATUS: ${esc(r.packageStatus)} · PART USED SAVE PENDING</p>`).join('') || ''}${commandSummary()}${possiblePartsMarkup(pl?.packages || prepared?.eligible || [])}<p>${operationBusy && !state.progress?.active && !majorProgress ? 'Working — keep this session open…' : state.progress?.active ? '' : esc(state.workflowError || (!cancelled && pl?.message) || (pl?.operational ? 'Picking List ready for warehouse scanning.' : cancelled ? `${pl.processingReturnedToActive || 0} unfinished packages returned to Active. ${pl.processedRetained || 0} completed packages remain Processed. ${pl.skipped || 0} packages skipped due to unexpected status. Reset the page to prepare a new Picking List.` : 'Upload and matching are read-only. Generate explicitly to assign eligible packages.'))}</p>
       ${pl ? `<p><strong>${esc(pl.pickingListNumber)}</strong> · ${pl.succeeded.length} / ${pl.packages.length} ASSIGNED${pl.createdAt ? ` · Created ${esc(pl.createdAt)}` : ''}</p>${pl.failed.map(r => `<p class="pas-confirm-error">${esc(r.trackingNumber)}: ${esc(r.reason)}</p>`).join('')}` : ''}
       <div class="pas-actions">${startNewAction()}${adminRecoveryMarkup()}
       ${!created ? `<button class="button button-primary" id="pas-create-pl" ${operationBusy || (!prepared?.eligible.length && !state.creationRequestId) || ['blocked', 'persisting'].includes(pl?.phase) ? 'disabled' : ''}>${state.creationRequestId ? 'Retry / Resume Picking List' : 'GENERATE PICKING LIST'}</button><button class="button" id="pas-remove-excel" ${operationBusy || !state.file || hasProtectedOperation() ? 'disabled' : ''}>REMOVE EXCEL</button>` : ''}
@@ -671,24 +716,31 @@
   }
   async function prepareInventory() {
     if (operationBusy || state.creationRequestId || !state.packages.length) return;
-    operationBusy = true; state.workflowError = ""; renderSetup(); const run = lifecycle;
-    try { await prepareCommands(); if (!context || run !== lifecycle) return; const result = await window.MkiteB044Picking.prepare({ rows: state.packages }); if (context && run === lifecycle) { state.prepared = result; save(); } }
-    catch (error) { if (context && run === lifecycle) { state.prepared = null; state.workflowError = error.message; } }
+    operationBusy = true; state.workflowError = ""; setProgress({stage:'VALIDATING PACKAGES',message:'Checking package data...',indeterminate:true}); const run = lifecycle;
+    try { await prepareCommands(); if (!context || run !== lifecycle) return; setProgress({stage:'MATCHING INVENTORY',message:`Matching ${state.packages.length} packages against current inventory...`,indeterminate:true}); const result = await window.MkiteB044Picking.prepare({ rows: state.packages }); if (context && run === lifecycle) { state.prepared = result; clearProgress(); save(); } }
+    catch (error) { if (context && run === lifecycle) { clearProgress(); state.prepared = null; state.workflowError = error.message; } }
     finally { if (context && run === lifecycle) { operationBusy = false; renderSetup(); } }
   }
   async function createPickingList() {
     if (operationBusy || state.pl?.operational || ['cancelled', 'cancelling'].includes(state.pl?.phase)) return;
     if (!state.creationRequestId && !window.confirm(`Generate Picking List?\n\n${state.prepared?.eligible.length || 0} eligible packages will be assigned to this Picking List and changed from Active to Processing.`)) return;
     state.creationRequestId = state.creationRequestId || window.crypto.randomUUID(); state.generationUncertain = true; save();
-    operationBusy = true; state.workflowError = ""; renderSetup(); const run = lifecycle;
+    operationBusy = true; state.workflowError = ""; const resumedTotal=state.pl?.packages?.length||0,resumedCompleted=state.pl?.succeeded?.length||0;
+    if(resumedTotal)setProgress({stage:'ASSIGNING PACKAGES',completed:resumedCompleted,total:resumedTotal,message:`${resumedCompleted} of ${resumedTotal} packages processed`});
+    else setProgress({stage:'CREATING PICKING LIST',message:'Creating and saving Picking List...',indeterminate:true});
+    const run = lifecycle;
     try {
       do {
         const result = await window.MkiteB044Picking.create({ requestId: state.creationRequestId, rows: state.packages, sourceFile: state.file.name, totalSourceRows: state.totalRows });
         if (!context || run !== lifecycle) return;
         result.packages = result.packages.map(r => ({ printCount: 0, printStatus: STATUS.NOT_PRINTED, ...r }));
-        state.generationUncertain = false; state.pl = result; state.prepared = { packages: [...result.packages, ...result.exceptions], eligible: result.packages, exceptions: result.exceptions }; save(); renderSetup();
+        state.generationUncertain = false; state.pl = result; state.prepared = { packages: [...result.packages, ...result.exceptions], eligible: result.packages, exceptions: result.exceptions };
+        setProgress({stage:result.operational?'PICKING LIST READY':'ASSIGNING PACKAGES',completed:result.succeeded.length,total:result.packages.length,message:result.operational?'Picking List ready':`${result.succeeded.length} of ${result.packages.length} packages processed`});
       } while (state.pl.phase === "assigning" && !state.pl.failed.length && state.pl.pendingCount > 0);
+      if(state.pl?.operational){await new Promise(resolve=>(window.requestAnimationFrame||((callback)=>Promise.resolve().then(callback)))(resolve));clearProgress();}
+      else { state.progress.active=false; state.workflowError ||= state.pl?.error?.message || state.pl?.message || ''; save(); }
     } catch (error) { if (context && run === lifecycle) {
+      if(state.progress?.percent===100)state.progress.percent=99;state.progress.active=false;
       state.workflowError = error.message;
       if (!state.pl?.pickingListRecordId && ['INVALID_INPUT', 'REQUEST_ID_REQUIRED', 'INVALID_ROWS', 'DUPLICATE_SOURCE_TRACKING', 'PACKAGE_STATUS_SCHEMA_ERROR', 'PROCESSING_STATUS_NOT_AVAILABLE', 'NO_ELIGIBLE_PACKAGES', 'PL_NUMBER_COLLISION', 'PICKING_LIST_NOT_CONFIGURED'].includes(error.code)) state.generationUncertain = false;
       save();
@@ -700,7 +752,7 @@
     render,
     init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; startLocationLookup(); restore(); renderSetup(); reconcilePickingList(); },
     cleanup() { locationLookup?.dispose(); locationLookup=null; adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.getElementById("pas-print-frame")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
-    _test: { inventoryPrintSnapshot, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, qrSvg, qrImage, printDocument, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
+    _test: { inventoryPrintSnapshot, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, qrSvg, qrImage, printDocument, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, setProgress, clearProgress, progressMarkup, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
   };
   window.MkiteClientToolModules["b044.put-away-scan"] = module;
 }(window, document));

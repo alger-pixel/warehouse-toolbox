@@ -92,6 +92,16 @@
 .pas-workflow-step .pas-upload { padding:22px; margin:0; box-shadow:none; background:var(--panel-secondary); }
 .pas-workflow-step .pas-picking-panel { margin:0; padding:0; border:0; box-shadow:none; background:transparent; }
 .pas-workflow-step .pas-picking-panel h3 { margin:0 0 10px; }
+.pas-generation-progress { margin:14px 0 18px; padding:16px 18px; border:1px solid color-mix(in srgb,#2466b5 45%,var(--border-color)); border-radius:14px; background:color-mix(in srgb,#2466b5 8%,var(--panel-bg)); }
+.pas-progress-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; color:var(--text-primary); font-size:13px; letter-spacing:.045em; }
+.pas-progress-heading>strong:last-child { flex:none; font-size:20px; letter-spacing:0; }
+.pas-progress-track { position:relative; height:12px; margin:12px 0 9px; overflow:hidden; border-radius:999px; background:color-mix(in srgb,var(--text-secondary) 18%,transparent); }
+.pas-progress-track>span { display:block; width:var(--pas-progress); height:100%; border-radius:inherit; background:#2466b5; transition:width .2s ease; }
+.pas-generation-progress.is-indeterminate .pas-progress-track>span { width:38%; animation:pas-progress-indeterminate 1.25s ease-in-out infinite; }
+.pas-generation-progress p { margin:0; color:var(--text-secondary); font-size:13px; }
+.pas-generation-progress .pas-progress-stage { margin-bottom:3px; color:var(--text-primary); font-weight:700; }
+@keyframes pas-progress-indeterminate { from { transform:translateX(-110%); } to { transform:translateX(290%); } }
+@media (prefers-reduced-motion:reduce) { .pas-generation-progress.is-indeterminate .pas-progress-track>span { width:100%; animation:none; opacity:.45; } }
 .pas-workflow-step .pas-picking-panel .pas-actions { margin-top:20px; padding-top:20px; border-top:1px solid var(--border-color); }
 .pas-preparation .button-primary { background:var(--text-primary); color:var(--panel-bg); }
 .pas-workflow-step .pas-stat { min-height:94px; padding:16px; border:1px solid var(--border-color); border-radius:14px; box-shadow:none; }

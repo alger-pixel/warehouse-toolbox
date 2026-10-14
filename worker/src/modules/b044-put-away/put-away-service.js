@@ -187,6 +187,11 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       const record = await records.getRecord({ ...args, recordId: row.packageRecordId });
       if (record.record_id !== row.packageRecordId || normalizeSku(record.fields?.[F.sku]) !== row.normalizedTracking) fail('PACKAGE_STATE_CONFLICT', 'Package identity changed.');
       const packageStatus = record.fields[F.status];
+      const lastAction = String(record.fields?.[F.note] || '').split(/\r?\n/).filter(line => line.includes(' - B044 SCAN PUT AWAY TOOL: PL NUMBER: ')).at(-1) || '';
+      const suffix = ` - B044 SCAN PUT AWAY TOOL: PL NUMBER: ${job.pickingListNumber} - `;
+      const noteOwnershipValid = lastAction.endsWith(suffix + 'CREATED') || lastAction.endsWith(suffix + 'DONE PUTTING AWAY');
+      const reservationOwned = Boolean(job.requestId) && await storage.get(`reserved:${row.packageRecordId}`) === job.requestId;
+      const ownershipValid = noteOwnershipValid && reservationOwned;
       let partsPersisted = !row.commandRaw, completionVerified = false;
       if (packageStatus === 'Processed' && row.completionIntent) {
         try {
@@ -205,13 +210,14 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
           } catch { partsPersisted = false; }
         }
       }
-      packages.push({ packageRecordId: row.packageRecordId, packageStatus, currentStatus: packageStatus, historicalCompletionExists: Boolean(row.completedAt || row.completionIntent || snapshot.packages.find(p => p.packageRecordId === row.packageRecordId)?.completedAt), partsPersisted,
+      packages.push({ packageRecordId: row.packageRecordId, packageStatus, currentStatus: packageStatus, ownershipValid, historicalCompletionExists: Boolean(row.completedAt || row.completionIntent || snapshot.packages.find(p => p.packageRecordId === row.packageRecordId)?.completedAt), partsPersisted,
         reconciliationRequired: packageStatus === 'Processed' && !completionVerified,
         completedAt: completionVerified ? (row.completionIntent?.confirmedAt || snapshot.packages.find(p => p.packageRecordId === row.packageRecordId)?.completedAt) : null,
         completionIntent: row.completionIntent || null });
     }
     const completedCount = packages.filter(row => row.packageStatus === 'Processed').length;
-    return { pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId, totalCount: packages.length, assignedCount: packages.length, processedCount: completedCount, processingCount: packages.filter(r => r.packageStatus === 'Processing').length, cancellationAllowed: completedCount === 0 && ['operational','cancelling'].includes(job.phase || 'operational'), completedCount, remainingCount: packages.length - completedCount, packages };
+    const executionAllowed = packages.every(row => row.ownershipValid && ['Processing', 'Processed'].includes(row.packageStatus));
+    return { pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId, totalCount: packages.length, assignedCount: packages.length, processedCount: completedCount, processingCount: packages.filter(r => r.packageStatus === 'Processing').length, executionAllowed, cancellationAllowed: executionAllowed && completedCount === 0 && ['operational','cancelling'].includes(job.phase || 'operational'), completedCount, remainingCount: packages.length - completedCount, packages };
   }
   async function persistProcessTime(key, job, outcome) {
     // Only updated clients create this durable first-scan checkpoint. Historical

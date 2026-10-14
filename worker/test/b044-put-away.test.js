@@ -205,6 +205,20 @@ test('changed identity, reservation or ownership blocks cancellation without mut
   }
 });
 
+test('reconciliation reports authoritative execution eligibility from status, note ownership and reservation', async () => {
+  const f = fixture(); const pl = await f.service().create(f.input);
+  const identity = { pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId };
+  let result = await f.service().reconcile(identity);
+  assert.equal(result.executionAllowed, true); assert.ok(result.packages.every(row => row.ownershipValid));
+  f.data.get('rec-A').fields.NOTE += '\n2026/09/05 16:22 - B044 SCAN PUT AWAY TOOL: PL NUMBER: OTHER - CREATED';
+  result = await f.service().reconcile(identity);
+  assert.equal(result.executionAllowed, false); assert.equal(result.packages.find(row => row.packageRecordId === 'rec-A').ownershipValid, false);
+  f.data.get('rec-A').fields.NOTE = f.data.get('rec-A').fields.NOTE.split('\n').slice(0, -1).join('\n');
+  f.memory.set('reserved:rec-A', 'another-request');
+  result = await f.service().reconcile(identity);
+  assert.equal(result.executionAllowed, false); assert.equal(result.cancellationAllowed, false);
+});
+
 test('cancellation resumes lost rollback acknowledgement without duplicate notes', async () => {
   const f = fixture(); const pl = await f.service().create(f.input);
   const update = f.records.updateRecord; let once = true;

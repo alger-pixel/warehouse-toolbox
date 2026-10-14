@@ -116,6 +116,57 @@ test('prepare stays read-only and generation requires explicit confirmation befo
   assert.doesNotMatch(h.root.innerHTML, /id="pas-remove-excel"/);
 });
 
+test('generation progress clamps percentages and renders determinate or indeterminate state', () => {
+  const h = setup();
+  h.tool.setProgress({ stage: 'ASSIGNING PACKAGES', completed: 17, total: 25, message: '17 of 25 packages processed' });
+  assert.equal(h.tool.getState().progress.percent, 68); assert.match(h.tool.progressMarkup(), /68%/); assert.match(h.tool.progressMarkup(), /17 of 25 packages processed/);
+  h.tool.setProgress({ stage: 'ASSIGNING PACKAGES', completed: 30, total: 25 }); assert.equal(h.tool.getState().progress.percent, 100);
+  h.tool.setProgress({ stage: 'ASSIGNING PACKAGES', completed: -4, total: 25 }); assert.equal(h.tool.getState().progress.percent, 0);
+  h.tool.setProgress({ stage: 'CREATING PICKING LIST', message: 'Saving Picking List...', indeterminate: true });
+  assert.equal(h.tool.getState().progress.indeterminate, true); assert.doesNotMatch(h.tool.progressMarkup(), /%/); assert.doesNotMatch(h.tool.progressMarkup(), /aria-valuenow/);
+});
+
+test('inventory preparation uses actual command counts then indeterminate bulk matching and clears on success', async () => {
+  const h = setup(); const state = h.tool.getState(); state.pl = null; state.packages[0].commandRaw = '补说明书';
+  h.window.MkiteApiClient = { post: async () => ({ ok: true, data: { commandAiStatus: 'SIMPLIFIED', commandDisplay: 'ADD MANUAL' } }) };
+  let releasePrepare;
+  h.window.MkiteB044Picking.prepare = () => new Promise(resolve => { releasePrepare = resolve; });
+  const pending = h.tool.prepareInventory(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.progress.active, true); assert.equal(state.progress.stage, 'MATCHING INVENTORY'); assert.equal(state.progress.indeterminate, true);
+  releasePrepare({ packages: state.packages, eligible: state.packages, exceptions: [] }); await pending;
+  assert.equal(state.progress.active, false); assert.equal(state.prepared.eligible.length, 1);
+});
+
+test('generation uses durable assignment counts, reaches 100, and clears after success', async () => {
+  const h = setup(); const state = h.tool.getState(); state.pl = null;
+  const packages = Array.from({ length: 10 }, (_, i) => ({ ...state.packages[0], id: `row-${i}`, packageRecordId: `rec-${i}`, trackingNumber: `TRACK-${i}` }));
+  state.packages = packages; state.prepared = { packages, eligible: packages, exceptions: [] };
+  h.window.confirm = () => true; h.window.crypto = { randomUUID: () => 'generation-progress-1' }; let call = 0, observed, completedObserved;
+  h.window.requestAnimationFrame = callback => { completedObserved = structuredClone(state.progress); callback(); };
+  h.window.MkiteB044Picking.create = async () => {
+    call += 1;
+    if (call === 2) observed = structuredClone(state.progress);
+    const completed = call === 1 ? 8 : 10;
+    return { operational: completed === 10, phase: completed === 10 ? 'operational' : 'assigning', pickingListNumber: 'PL-1', pickingListRecordId: 'master', packages, exceptions: [], succeeded: packages.slice(0, completed).map(row => row.packageRecordId), failed: [], pendingCount: 10 - completed };
+  };
+  await h.tool.createPickingList();
+  assert.equal(call, 2); assert.equal(observed.completed, 8); assert.equal(observed.total, 10); assert.equal(observed.percent, 80);
+  assert.equal(completedObserved.percent, 100); assert.equal(completedObserved.message, 'Picking List ready');
+  assert.equal(state.progress.active, false); assert.equal(state.progress.percent, 0); assert.equal(state.pl.operational, true);
+});
+
+test('failed generation stops below 100 and retry derives progress from persisted assignment state', async () => {
+  const h = setup(); const state = h.tool.getState(); state.pl = null; state.prepared = { packages: state.packages, eligible: state.packages, exceptions: [] };
+  h.window.confirm = () => true; h.window.crypto = { randomUUID: () => 'generation-progress-2' };
+  h.window.MkiteB044Picking.create = async () => { throw Error('Connection lost'); };
+  await h.tool.createPickingList(); assert.equal(state.progress.active, false); assert.notEqual(state.progress.percent, 100); assert.match(h.root.innerHTML, /Connection lost/);
+  state.pl = { operational: false, phase: 'assigning', pickingListNumber: 'PL-2', pickingListRecordId: 'master-2', packages: Array.from({ length: 4 }, (_, i) => ({ ...state.packages[0], packageRecordId: `retry-${i}` })), succeeded: ['retry-0', 'retry-1'], failed: [], pendingCount: 2 };
+  let observed;
+  h.window.MkiteB044Picking.create = async () => { observed = structuredClone(state.progress); return { ...state.pl, operational: true, phase: 'operational', succeeded: state.pl.packages.map(row => row.packageRecordId), pendingCount: 0, exceptions: [] }; };
+  await h.tool.createPickingList(); assert.equal(observed.percent, 50); assert.equal(observed.completed, 2); assert.equal(state.progress.active, false);
+  h.tool.clearProgress(); h.tool.getState().pl.phase = 'cancelled'; h.tool.startNewPickingList(); assert.equal(h.tool.getState().progress.active, false);
+});
+
 test('Remove Excel and confirmed Reset Page clear pre-generation local state without requests', () => {
   for (const action of ['removeExcel', 'resetSession']) {
     const h = setup(); const state = h.tool.getState(); state.pl = null;
@@ -137,10 +188,13 @@ test('Reset Page requires confirmation and protects active or uncertain operatio
 
 test('cancel uses original identity, locks A4 and Scan & Print, then permits a local reset', async () => {
   const h = setup(); const state = h.tool.getState(); state.pl.phase = 'operational'; state.creationRequestId = 'operation-123456789';
-  h.window.confirm = () => true; const requests = [];
+  h.window.confirm = () => true; const requests = []; let completedProgress;
+  h.window.requestAnimationFrame = callback => { completedProgress = structuredClone(state.progress); callback(); };
   h.window.MkiteB044Picking.cancel = async input => { requests.push(input); return { ...state.pl, phase: 'cancelled', operational: false }; };
   await h.tool.cancelPickingList();
   assert.equal(requests[0].requestId, 'operation-123456789'); assert.equal(requests[0].pickingListNumber, 'B044-PL-20260907-0001');
+  assert.equal(completedProgress.operation, 'CANCELLING PICKING LIST'); assert.equal(completedProgress.percent, 100); assert.equal(completedProgress.message, 'Picking List cancelled');
+  assert.equal(state.progress.active, false);
   assert.match(h.root.innerHTML, /PICKING LIST CANCELLED/); assert.match(h.root.innerHTML, /id="pas-start-scan"[^>]*disabled/);
   assert.match(h.root.innerHTML, /id="pas-print-a4" disabled/);
   await h.tool.processScan('TRACK1'); assert.equal(h.calls.length, 0);
@@ -152,7 +206,59 @@ test('failed cancellation retains the operation for retry and keeps scan locked 
   h.window.MkiteB044Picking.cancel = async () => { throw new Error('Connection lost'); };
   await h.tool.cancelPickingList();
   assert.equal(h.tool.getState().pl.phase, 'cancelling'); assert.equal(h.tool.getState().pl.operational, false);
-  assert.match(h.root.innerHTML, /Retry Cancellation/); h.tool.resetSession(); assert.ok(h.tool.getState().file);
+  assert.equal(h.tool.getState().progress.operation, 'CANCELLING PICKING LIST'); assert.equal(h.tool.getState().progress.active, false); assert.notEqual(h.tool.getState().progress.percent, 100);
+  assert.match(h.root.innerHTML, /Retry Cancellation/); assert.doesNotMatch(h.root.innerHTML, /Working — keep this session open/); h.tool.resetSession(); assert.ok(h.tool.getState().file);
+});
+
+test('cancellation stays locked while pending and ignores a duplicate request', async () => {
+  const h = setup(); h.tool.getState().pl.phase = 'operational'; h.window.confirm = () => true;
+  let resolveCancel, calls = 0;
+  h.window.MkiteB044Picking.cancel = () => { calls += 1; return new Promise(resolve => { resolveCancel = resolve; }); };
+  const first = h.tool.cancelPickingList(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.tool.getState().pl.phase, 'cancelling'); assert.equal(h.tool.getState().pl.operational, false);
+  assert.equal(h.tool.getState().progress.operation, 'CANCELLING PICKING LIST'); assert.equal(h.tool.getState().progress.indeterminate, true);
+  assert.match(h.root.innerHTML, /CANCELLING PICKING LIST/); assert.doesNotMatch(h.tool.progressMarkup(), /aria-valuenow|<strong>\d+%/); assert.doesNotMatch(h.root.innerHTML, /Working — keep this session open/); assert.equal(h.tool.counts().remaining, 0);
+  await h.tool.cancelPickingList(); assert.equal(calls, 1);
+  resolveCancel({ ...h.tool.getState().pl, phase: 'cancelled', operational: false }); await first;
+});
+
+test('cancellation progress uses authoritative batch counts and retry resumes from the current count', async () => {
+  const h = setup(); const state = h.tool.getState();
+  state.pl.phase = 'cancelling'; state.pl.operational = false; state.pl.packages = Array.from({ length: 5 }, (_, i) => ({ ...state.pl.packages[0], packageRecordId: `cancel-${i}` })); state.pl.cancelPendingCount = 2;
+  h.window.confirm = () => true; let observed, call = 0;
+  h.window.MkiteB044Picking.cancel = async () => {
+    call += 1; observed ||= structuredClone(state.progress);
+    return { ...state.pl, phase: 'cancelled', operational: false, cancelPendingCount: 0 };
+  };
+  await h.tool.cancelPickingList();
+  assert.equal(call, 1); assert.equal(observed.completed, 3); assert.equal(observed.total, 5); assert.equal(observed.percent, 60);
+  assert.equal(observed.message, '3 of 5 package assignments processed');
+});
+
+test('ownership cancellation conflict refreshes authoritative state and restores execution only when safe', async () => {
+  const h = setup(); const state = h.tool.getState(); state.pl.phase = 'operational'; h.window.confirm = () => true;
+  let reconciles = 0;
+  h.window.MkiteB044Picking.reconcile = async () => {
+    reconciles += 1;
+    return { executionAllowed: true, packages: [{ packageRecordId: 'rec1', packageStatus: 'Processing', ownershipValid: true, completedAt: null, reconciliationRequired: false }] };
+  };
+  h.window.MkiteB044Picking.cancel = async () => { throw Object.assign(Error('An assigned package Picking List ownership changed. Cancellation is blocked.'), { code: 'PACKAGE_STATE_CONFLICT' }); };
+  await h.tool.cancelPickingList();
+  assert.equal(reconciles, 2); assert.equal(state.pl.phase, 'operational'); assert.equal(state.pl.operational, true);
+  assert.equal(state.progress.active, false); assert.notEqual(state.progress.percent, 100);
+  assert.equal(h.tool.currentQueue().length, 1); assert.equal(h.tool.counts().remaining, 1);
+  assert.match(h.root.innerHTML, /Ready for Scan &amp; Print/); assert.match(state.workflowError, /ownership changed/); assert.doesNotMatch(h.root.innerHTML, /Retry Cancellation|Working — keep this session open/);
+});
+
+test('ownership cancellation conflict remains blocked when authoritative ownership is invalid', async () => {
+  const h = setup(); const state = h.tool.getState(); state.pl.phase = 'operational'; h.window.confirm = () => true;
+  h.window.MkiteB044Picking.reconcile = async () => ({ executionAllowed: false, packages: [{ packageRecordId: 'rec1', packageStatus: 'Processing', ownershipValid: false, completedAt: null, reconciliationRequired: false }] });
+  h.window.MkiteB044Picking.cancel = async () => { throw Object.assign(Error('Package reservation belongs to another operation.'), { code: 'PACKAGE_STATE_CONFLICT' }); };
+  await h.tool.cancelPickingList();
+  assert.equal(state.pl.phase, 'blocked'); assert.equal(state.pl.operational, false); assert.equal(h.tool.currentQueue().length, 0);
+  assert.match(h.root.innerHTML, /Refreshed package ownership or status does not permit Scan &amp; Print/);
+  assert.doesNotMatch(h.root.innerHTML, /Cancellation is in progress|Retry Cancellation/);
+  h.tool.resetSession(); assert.ok(h.tool.getState().file);
 });
 
 function foundPackagesFixture() {
