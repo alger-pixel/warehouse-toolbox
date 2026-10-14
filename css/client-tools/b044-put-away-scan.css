@@ -102,7 +102,13 @@
 .pas-generation-progress .pas-progress-stage { margin-bottom:3px; color:var(--text-primary); font-weight:700; }
 .pas-recovery-candidate { margin:14px 0; padding:16px 18px; border:1px solid color-mix(in srgb,#2466b5 45%,var(--border-color)); border-left:4px solid #2466b5; border-radius:12px; background:color-mix(in srgb,#2466b5 8%,var(--panel-bg)); }
 .pas-recovery-candidate h4,.pas-recovery-candidate p { margin:0 0 8px; }
+.pas-recovery-candidate dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 18px; margin:14px 0; }
+.pas-recovery-candidate dl div { display:flex; justify-content:space-between; gap:12px; border-bottom:1px solid var(--border-color); padding-bottom:5px; }
+.pas-recovery-candidate dt { color:var(--text-secondary); }
+.pas-recovery-candidate dd { margin:0; font-weight:700; }
+.pas-recovery-candidate .pas-recovery-warning { color:#8a4b00; font-weight:700; }
 .pas-recovery-candidate .button { margin-top:4px; }
+@media(max-width:700px) { .pas-recovery-candidate dl { grid-template-columns:1fr; } }
 @keyframes pas-progress-indeterminate { from { transform:translateX(-110%); } to { transform:translateX(290%); } }
 @media (prefers-reduced-motion:reduce) { .pas-generation-progress.is-indeterminate .pas-progress-track>span { width:100%; animation:none; opacity:.45; } }
 .pas-workflow-step .pas-picking-panel .pas-actions { margin-top:20px; padding-top:20px; border-top:1px solid var(--border-color); }

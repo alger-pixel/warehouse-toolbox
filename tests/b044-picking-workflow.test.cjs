@@ -95,16 +95,25 @@ test('fresh browser discovers and resumes the authoritative Picking List after P
   const h = setup(); const state = h.tool.getState(); state.pl = null; state.creationRequestId = null;
   state.prepared = { packages: state.packages, eligible: state.packages, exceptions: [] };
   h.window.confirm = () => true; h.window.crypto = { randomUUID: () => 'new-browser-request-1' };
+  const authoritative = Array.from({length:9},(_,i)=>({...state.packages[0],id:`row-${i}`,packageRecordId:`rec${i+1}`,trackingNumber:`TRACK${i+1}`,packageStatus:i?'Processing':'Processed',completedAt:i?null:'2026-10-14T17:01:47.416Z'}));
   let creates = 0, recoveries = 0, reconciles = 0;
   h.window.MkiteB044Picking.create = async () => { creates += 1; throw Object.assign(Error('PACKAGE_RESERVED: reserved'), { code: 'PACKAGE_RESERVED' }); };
-  h.window.MkiteB044Picking.recover = async body => { recoveries += 1; assert.equal(body.rows.length, 1); return { operational: true, phase: 'operational', requestId: 'original-operation-1', pickingListNumber: 'B044-PL-20261014-0009', pickingListRecordId: 'master-original', packages: state.packages, exceptions: [], succeeded: ['rec1'], failed: [], pendingCount: 0 }; };
-  h.window.MkiteB044Picking.reconcile = async () => { reconciles += 1; return { executionAllowed: true, packages: [{ packageRecordId: 'rec1', packageStatus: 'Processing', ownershipValid: true, completedAt: null, reconciliationRequired: false }] }; };
+  h.window.MkiteB044Picking.recover = async body => { recoveries += 1; assert.equal(body.rows.length, 1); return { operational: true, phase: 'operational', requestId: 'original-operation-1', pickingListNumber: 'B044-PL-20261014-0007', pickingListRecordId: 'master-original', packages: authoritative, exceptions: [], succeeded: authoritative.map(row=>row.packageRecordId), failed: [], pendingCount: 0, recoveryComparison:{uploadedCount:8,authoritativeCount:9,intersectionCount:8,uploadOnlyCount:0,existingPlOnlyCount:1,uploadOnly:[],existingPlOnly:[{packageRecordId:'rec1',trackingNumber:'TRACK1',packageStatus:'Processed'}]} }; };
+  h.window.MkiteB044Picking.reconcile = async () => { reconciles += 1; return { executionAllowed: true, packages: authoritative.map(row=>({ packageRecordId:row.packageRecordId, packageStatus:row.packageStatus, ownershipValid:true, completedAt:row.completedAt, reconciliationRequired:false })) }; };
   await h.tool.createPickingList();
   assert.equal(creates, 1); assert.equal(recoveries, 1); assert.equal(state.pl, null); assert.equal(state.creationRequestId, null);
-  assert.match(h.root.innerHTML, /Existing Picking List Found/); assert.match(h.root.innerHTML, /B044-PL-20261014-0009/); assert.match(h.root.innerHTML, /RESUME PICKING LIST/);
+  assert.match(h.root.innerHTML, /Existing Picking List Found/); assert.match(h.root.innerHTML, /B044-PL-20261014-0007/); assert.match(h.root.innerHTML, /Authoritative PL[\s\S]*9 packages/); assert.match(h.root.innerHTML, /Matched from upload[\s\S]*8 packages/); assert.match(h.root.innerHTML, /Already in PL only[\s\S]*1 packages/); assert.match(h.root.innerHTML, /RESUME PICKING LIST/);
   await h.tool.resumeExistingPickingList();
-  assert.equal(creates, 1); assert.equal(reconciles, 1); assert.equal(state.creationRequestId, 'original-operation-1'); assert.equal(state.pl.pickingListRecordId, 'master-original');
-  assert.match(h.root.innerHTML, /Ready for Scan &amp; Print/);
+  assert.equal(creates, 1); assert.equal(reconciles, 1); assert.equal(state.creationRequestId, 'original-operation-1'); assert.equal(state.pl.pickingListRecordId, 'master-original'); assert.equal(state.pl.packages.length,9); assert.ok(state.pl.packages[0].completedAt); assert.equal(h.tool.counts().remaining,8);
+  assert.match(h.root.innerHTML, /Ready for Scan &amp; Print/); assert.match(h.root.innerHTML, /1 \/ 9 packages completed/);
+});
+test('upload-only unreserved packages require confirmation and remain excluded from recovered PL',async()=>{
+  const h=setup(),state=h.tool.getState(),authoritative=[state.packages[0]];state.pl=null;
+  state.recoveryCandidate={operational:true,phase:'operational',requestId:'original-operation-2',pickingListNumber:'B044-PL-20261014-0011',pickingListRecordId:'master-2',packages:authoritative,exceptions:[],succeeded:['rec1'],failed:[],recoveryComparison:{uploadedCount:3,authoritativeCount:1,intersectionCount:1,uploadOnlyCount:2,existingPlOnlyCount:0,uploadOnly:[{packageRecordId:'extra-1'},{packageRecordId:'extra-2'}],existingPlOnly:[]}};
+  let confirms=0,reconciles=0;h.window.confirm=()=>{confirms+=1;return confirms>1};h.window.MkiteB044Picking.reconcile=async()=>{reconciles+=1;return{executionAllowed:true,packages:[{packageRecordId:'rec1',packageStatus:'Processing',ownershipValid:true,completedAt:null,reconciliationRequired:false}]}};
+  h.tool.workflowPanel();assert.match(h.tool.workflowPanel(),/Uploaded but excluded[\s\S]*2 packages/);assert.match(h.tool.workflowPanel(),/will NOT be added/);
+  await h.tool.resumeExistingPickingList();assert.equal(state.pl,null);assert.equal(reconciles,0);
+  await h.tool.resumeExistingPickingList();assert.equal(reconciles,1);assert.equal(state.pl.packages.length,1);assert.equal(state.creationRequestId,'original-operation-2');
 });
 test('authoritative recovery network failure preserves retry and succeeds on the next attempt', async () => {
   const h = setup(); const state = h.tool.getState(); state.pl = null; state.creationRequestId = null;

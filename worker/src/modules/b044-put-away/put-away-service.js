@@ -173,19 +173,35 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     if (!resolved.length) fail('RECOVERY_NOT_FOUND', 'No existing Picking List ownership was found for the uploaded packages.');
     const unique = [...new Map(resolved.map(record => [record.record_id, record])).values()];
     const ownership = await Promise.all(unique.map(async record => ({ record, owner: await storage.get(`reserved:${record.record_id}`) })));
-    const owners = new Set(ownership.map(item => item.owner).filter(Boolean));
+    const reserved = ownership.filter(item => item.owner), owners = new Set(reserved.map(item => item.owner));
     if (owners.size > 1) fail('MULTIPLE_PICKING_LIST_OWNERS', 'Uploaded packages belong to multiple existing Picking Lists. Automatic recovery is blocked.');
     if (!owners.size) fail('RECOVERY_NOT_FOUND', 'No active Picking List owns the uploaded packages.');
-    if (ownership.some(item => !item.owner)) fail('MIXED_PACKAGE_OWNERSHIP', 'Some uploaded packages belong to an existing Picking List while others are unreserved. Automatic recovery is blocked.');
     const requestId = [...owners][0], job = await storage.get(`job:${requestId}`);
     if (!job) fail('RECOVERY_NOT_FOUND', 'The authoritative Picking List operation could not be loaded.');
     const uploadedIds = new Set(unique.map(record => record.record_id)), jobIds = new Set((job.rows || []).map(row => row.packageRecordId));
-    if (uploadedIds.size !== jobIds.size || [...uploadedIds].some(id => !jobIds.has(id))) fail('MIXED_PACKAGE_OWNERSHIP', 'The uploaded package set does not exactly match the existing Picking List. Automatic recovery is blocked.');
+    const intersection = unique.filter(record => jobIds.has(record.record_id));
+    const uploadOnlyOwnership = ownership.filter(({ record }) => !jobIds.has(record.record_id));
+    if (!intersection.length) fail('RECOVERY_NOT_FOUND', 'The upload does not identify a package in the existing Picking List.');
+    if (uploadOnlyOwnership.some(item => item.owner)) fail('PACKAGE_STATE_CONFLICT', 'A reserved uploaded package is absent from its owning Picking List. Automatic recovery is blocked.');
     if (job.phase === 'cancelled') fail('PICKING_LIST_TERMINAL', 'The uploaded packages belong to a cancelled Picking List. It cannot be resumed.');
     if (!['assigning', 'operational', 'cancelling'].includes(job.phase)) fail('PICKING_LIST_RECOVERY_BLOCKED', 'The existing Picking List is not in a safely recoverable state.');
-    if (job.phase === 'operational' && ownership.every(({ record }) => record.fields?.[F.status] === 'Processed')) fail('PICKING_LIST_TERMINAL', 'The uploaded packages belong to a completed Picking List. It cannot be resumed.');
+    const reconciled = await reconcile({ pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId });
+    if (job.phase === 'operational' && reconciled.completedCount === reconciled.totalCount) fail('PICKING_LIST_TERMINAL', 'The uploaded packages belong to a completed Picking List. It cannot be resumed.');
+    if (job.phase === 'operational' && !reconciled.executionAllowed) fail('PACKAGE_STATE_CONFLICT', 'The authoritative Picking List package ownership or status is not safe to resume.');
+    const statusById = new Map(reconciled.packages.map(row => [row.packageRecordId, row]));
+    const recovered = publicJob({ ...job, rows: job.rows.map(row => ({ ...row, ...(statusById.get(row.packageRecordId) || {}) })) });
+    const descriptor = (record, reservationState) => ({ packageRecordId: record.record_id, trackingNumber: cleanText(record.fields?.[F.sku]), packageStatus: cleanText(record.fields?.[F.status]), reservationState });
+    recovered.recoveryComparison = {
+      uploadedCount: unique.length,
+      authoritativeCount: jobIds.size,
+      intersectionCount: intersection.length,
+      uploadOnlyCount: uploadOnlyOwnership.length,
+      existingPlOnlyCount: jobIds.size - intersection.length,
+      uploadOnly: uploadOnlyOwnership.map(({ record }) => descriptor(record, 'UNRESERVED')),
+      existingPlOnly: job.rows.filter(row => !uploadedIds.has(row.packageRecordId)).map(row => ({ packageRecordId: row.packageRecordId, trackingNumber: row.trackingNumber, packageStatus: statusById.get(row.packageRecordId)?.packageStatus || row.packageStatus || '', reservationState: 'OWNED_BY_AUTHORITATIVE_PL' }))
+    };
     if (input.resume === true && job.phase === 'assigning') return create({ requestId: job.requestId, rows: JSON.parse(job.fingerprint) });
-    return publicJob(job);
+    return recovered;
   }
   async function reconcile(input) {
     validateInput(input);

@@ -83,7 +83,8 @@ test('authoritative recovery finds the original active job without browser reque
   const created = await f.service().create(f.input), before = structuredClone(f.data); f.events.length = 0;
   const recovered = await f.service().recover({ rows: f.input.rows });
   assert.equal(recovered.requestId, f.input.requestId); assert.equal(recovered.pickingListNumber, created.pickingListNumber); assert.equal(recovered.operational, true);
-  assert.deepEqual(f.data, before); assert.deepEqual(f.events, ['list-packages']);
+  assert.equal(recovered.recoveryComparison.intersectionCount, 2); assert.equal(recovered.recoveryComparison.uploadOnlyCount, 0); assert.equal(recovered.recoveryComparison.existingPlOnlyCount, 0);
+  assert.deepEqual(f.data, before); assert.equal(f.events.some(event => event.fields || event === 'master'), false);
 });
 test('confirmed recovery resumes assignment from the durable source fingerprint', async () => {
   const f = fixture(); await f.service().create(f.input);
@@ -91,13 +92,36 @@ test('confirmed recovery resumes assignment from the durable source fingerprint'
   const recovered = await f.service().recover({ rows: [{ ...f.input.rows[0], commandRaw: 'different browser result' }], resume: true });
   assert.equal(recovered.operational, true); assert.equal(recovered.requestId, f.input.requestId); assert.equal(recovered.packages[0].commandRaw, undefined);
 });
-test('recovery blocks mixed unreserved packages and packages owned by multiple Picking Lists', async () => {
+test('recovery returns unreserved upload-only packages as excluded and blocks multiple Picking List owners', async () => {
   const mixed = fixture([packageRecord('A'), packageRecord('B')]); await mixed.service().create({ ...mixed.input, rows: [source('A')] });
-  await assert.rejects(mixed.service().recover({ rows: [source('A'), source('B')] }), error => error.code === 'MIXED_PACKAGE_OWNERSHIP');
+  const beforeData = structuredClone(mixed.data), beforeMemory = structuredClone(mixed.memory);
+  const candidate = await mixed.service().recover({ rows: [source('A'), source('B')] });
+  assert.deepEqual(candidate.recoveryComparison, { uploadedCount:2, authoritativeCount:1, intersectionCount:1, uploadOnlyCount:1, existingPlOnlyCount:0, uploadOnly:[{packageRecordId:'rec-B',trackingNumber:'B',packageStatus:'Active',reservationState:'UNRESERVED'}], existingPlOnly:[] });
+  assert.deepEqual(mixed.data, beforeData); assert.deepEqual(mixed.memory, beforeMemory); assert.equal(mixed.memory.has('reserved:rec-B'), false);
   const multiple = fixture([packageRecord('A'), packageRecord('B')]);
   await multiple.service().create({ ...multiple.input, rows: [source('A')] });
   await multiple.service().create({ ...multiple.input, requestId: 'second-operation-1234', rows: [source('B')] });
   await assert.rejects(multiple.service().recover({ rows: [source('A'), source('B')] }), error => error.code === 'MULTIPLE_PICKING_LIST_OWNERS');
+});
+test('upload subset restores the complete authoritative PL with completed and active PL-only packages', async () => {
+  for (const completedMissing of [true, false]) {
+    const names = 'ABCDEFGHI'.split(''), f = fixture(names.map(name => packageRecord(name))); f.input.rows = names.map(source);
+    let pl = await f.service().create(f.input); if (!pl.operational) pl = await f.service().create(f.input);
+    if (completedMissing) await f.service().complete({ pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:'rec-A',trackingNumber:'A',confirmationTracking:'A' });
+    const before = structuredClone(f.data), recovered = await f.service().recover({ rows:names.slice(1).map(source) });
+    assert.equal(recovered.packages.length,9); assert.equal(recovered.recoveryComparison.uploadedCount,8); assert.equal(recovered.recoveryComparison.authoritativeCount,9); assert.equal(recovered.recoveryComparison.intersectionCount,8); assert.equal(recovered.recoveryComparison.uploadOnlyCount,0); assert.equal(recovered.recoveryComparison.existingPlOnlyCount,1);
+    assert.equal(recovered.recoveryComparison.existingPlOnly[0].trackingNumber,'A'); assert.equal(recovered.recoveryComparison.existingPlOnly[0].packageStatus,completedMissing?'Processed':'Processing');
+    assert.equal(Boolean(recovered.packages.find(row=>row.packageRecordId==='rec-A').completedAt),completedMissing); assert.deepEqual(f.data,before);
+  }
+});
+test('repeated recovery discovery is read-only and idempotent', async () => {
+  const f=fixture([packageRecord('A'),packageRecord('B')]);f.input.rows=[source('A')];await f.service().create(f.input);
+  const data=structuredClone(f.data),memory=structuredClone(f.memory),first=await f.service().recover({rows:[source('A'),source('B')]}),second=await f.service().recover({rows:[source('A'),source('B')]});
+  assert.deepEqual(second,first);assert.deepEqual(f.data,data);assert.deepEqual(f.memory,memory);assert.equal(f.events.filter(event=>event==='master').length,1);
+});
+test('ambiguous package resolution remains blocked during recovery',async()=>{
+  const f=fixture([packageRecord('ABC1'),packageRecord('ABC2')]);await f.service().create({...f.input,rows:[source('ABC1')]});
+  await assert.rejects(f.service().recover({rows:[source('ABC')]}),error=>error.code==='RECOVERY_PACKAGE_AMBIGUOUS');
 });
 test('recovery rejects terminal jobs and returns cancellation-in-progress for safe retry', async () => {
   const cancelled = fixture(); const pl = await cancelled.service().create(cancelled.input);
