@@ -126,8 +126,14 @@
     const qr = window.qrcode(0, "M"); qr.addData(String(value), "Byte"); qr.make();
     return qr.createSvgTag({ cellSize: 5, margin: 4, scalable: true });
   }
+  function qrImage(value) {
+    const svg = qrSvg(value);
+    if (svg.startsWith('<div')) return svg;
+    const source = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    return `<img data-pas-qr src="${source}" alt="QR code for ${esc(value)}">`;
+  }
   function labelMarkup(item, preview) {
-    return `<article class="pas-label${preview ? " is-preview" : ""}"><header><div><span>到仓日期</span><strong>${esc(item.arrivalDate)}</strong></div><div><span>跟踪号</span><strong>${esc(item.trackingNumber)}</strong></div></header><section class="pas-label-section"><h3>SKU</h3><div class="pas-qr">${qrSvg(item.finalSku)}</div><strong>${esc(item.finalSku)}</strong></section><section class="pas-label-section"><h3>仓库入库单号</h3><div class="pas-qr">${qrSvg(item.warehouseInboundOrder)}</div><strong>${esc(item.warehouseInboundOrder)}</strong></section></article>`;
+    return `<article class="pas-label${preview ? " is-preview" : ""}"><header><div><span>到仓日期</span><strong>${esc(item.arrivalDate)}</strong></div><div><span>跟踪号</span><strong>${esc(item.trackingNumber)}</strong></div></header><section class="pas-label-section"><h3>SKU</h3><div class="pas-qr">${qrImage(item.finalSku)}</div><strong>${esc(item.finalSku)}</strong></section><section class="pas-label-section"><h3>仓库入库单号</h3><div class="pas-qr">${qrImage(item.warehouseInboundOrder)}</div><strong>${esc(item.warehouseInboundOrder)}</strong></section></article>`;
   }
 
   // Layout in points: 4x6 inches, with the same .19in inset as the package label.
@@ -419,15 +425,29 @@
       document.body.classList.add("pas-printing");
       return host;
     },
-    requestPrint(items, afterPrint) {
+    async ready(host) {
+      const images = Array.from(host.querySelectorAll?.("img[data-pas-qr]") || []);
+      await Promise.all(images.map((image) => {
+        if (image.complete && image.naturalWidth > 0) return undefined;
+        if (typeof image.decode === "function") return image.decode();
+        return new Promise((resolve, reject) => {
+          image.addEventListener("load", resolve, { once: true });
+          image.addEventListener("error", reject, { once: true });
+        });
+      }));
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise((resolve) => {
+        if (typeof window.requestAnimationFrame !== "function") { window.setTimeout(resolve, 0); return; }
+        window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+      });
+    },
+    async requestPrint(items, afterPrint) {
       const host = this.renderPrintDom(items);
-      window.setTimeout(() => {
-        try { window.print(); }
-        finally {
-          document.body.classList.remove("pas-printing"); host.innerHTML = "";
-          if (afterPrint) afterPrint();
-        }
-      }, 30);
+      try { await this.ready(host); window.print(); }
+      finally {
+        document.body.classList.remove("pas-printing"); host.innerHTML = "";
+        if (afterPrint) afterPrint();
+      }
     },
     printSingleForScan(item, reprint) {
       /* In Chrome kiosk-printing this request is auto-confirmed by the browser. */
@@ -655,7 +675,7 @@
     render,
     init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; startLocationLookup(); restore(); renderSetup(); reconcilePickingList(); },
     cleanup() { locationLookup?.dispose(); locationLookup=null; adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.body.classList.remove("pas-printing"); document.getElementById("pas-print-host")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
-    _test: { inventoryPrintSnapshot, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
+    _test: { inventoryPrintSnapshot, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, qrSvg, qrImage, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
   };
   window.MkiteClientToolModules["b044.put-away-scan"] = module;
 }(window, document));

@@ -8,8 +8,8 @@ compatibility_date = "2026-09-03"
 FEISHU_PROJECT_TABLE_ID = "tbldVnRmtOLM1Jzw" # PROJECT CLASS
 FEISHU_CASE_CATEGORY_TABLE_ID = "tblwFyckkj7CxLnt" # CASE CATEGORY
 FEISHU_CASE_CLASS_TABLE_ID = "tbluJiLs4arOJgt6" # CASE CLASS
-# Required for User Management only. Set the actual existing USER CLASS ID.
-FEISHU_USER_TABLE_ID = ""
+# Existing USER CLASS table; required by User Management and Case assignment options.
+FEISHU_USER_TABLE_ID = "tblH0ORSMjLeqPZA"
 FEISHU_TINECO_TOC_UNIT_TABLE_ID = "tblztQK3EhDAw2Wm"
 FEISHU_TOOL_TABLE_ID = "tblNxCev7LS7uETW" # TOOL CLASS
 FEISHU_SAFETY_ICON_TABLE_ID = "tblwUpkyUg7zJH2Z"

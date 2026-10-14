@@ -21,7 +21,7 @@ function setup(operational = true) {
   const module = window.MkiteClientToolModules['b044.put-away-scan'];
   const context = { root, storage: { get: () => structuredClone(saved), set: (_, value) => { saved = structuredClone(value); }, remove: () => { saved = null; } }, audio: { setEnabled() {}, success() {}, failure() {}, warning() {} }, toast: { show: message => notices.push(message) } };
   module.init(context);
-  return { tool: module._test, module, context, calls, starts, window, root, notices };
+  return { tool: module._test, module, context, calls, starts, window, document, root, notices };
 }
 
 test('Scan & Print requires an operational persisted PL', async () => {
@@ -405,6 +405,45 @@ test('normal label stays byte-identical as first label of a commanded package',(
  const h=setup(),row={...h.tool.currentQueue()[0],warehouseInboundOrder:'RMAB044-260902-0002'};
  const normal=h.tool.packageLabels(row,false),commanded=h.tool.packageLabels({...row,commandRaw:'换箱'},false);
  assert.equal(commanded.slice(0,normal.length),normal);assert.equal((normal.match(/<article/g)||[]).length,1);assert.match(commanded.slice(normal.length),/pas-command-label/);
+});
+
+test('thermal QR markup is self-contained and preserves the exact two label payloads',()=>{
+ const h=setup(),payloads=[];
+ h.window.qrcode=()=>({addData(value,mode){payloads.push([value,mode]);},make(){},createSvgTag(){return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1z"/></svg>';}});
+ const row={...h.tool.currentQueue()[0],finalSku:'B044-SKU<&',warehouseInboundOrder:'RMAB044-ORDER-1'};
+ const html=h.tool.packageLabels(row,false);
+ assert.deepEqual(payloads,[['B044-SKU<&','Byte'],['RMAB044-ORDER-1','Byte']]);
+ assert.equal((html.match(/data-pas-qr/g)||[]).length,2);
+ assert.equal((html.match(/data:image\/svg\+xml;charset=utf-8,/g)||[]).length,2);
+ assert.doesNotMatch(html,/<svg|src="\//);
+ assert.match(decodeURIComponent(html.match(/src="data:image\/svg\+xml;charset=utf-8,([^"]+)/)[1]),/^<svg xmlns=/);
+});
+
+test('print waits for QR decode, fonts and two painted frames before opening the dialog',async()=>{
+ const h=setup(),events=[],frames=[];
+ const image={complete:false,naturalWidth:0,decode:async()=>events.push('qr')};
+ const host={innerHTML:'',querySelectorAll:()=>[image]};
+ h.tool.printService.renderPrintDom=()=>host;
+ h.window.requestAnimationFrame=callback=>frames.push(callback);
+ h.window.print=()=>events.push('print');
+ let fontsResolved=false;
+ h.document.fonts={ready:Promise.resolve().then(()=>{fontsResolved=true;events.push('fonts');})};
+ const request=h.tool.printService.requestPrint([h.tool.currentQueue()[0]]);
+ await h.document.fonts.ready;await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(events.includes('print'),false);assert.equal(frames.length,1);assert.equal(fontsResolved,true);
+ frames.shift()();assert.equal(frames.length,1);assert.equal(events.includes('print'),false);
+ frames.shift()();await request;assert.deepEqual(events.filter(value=>value!=='fonts'),['qr','print']);
+ assert.equal(host.innerHTML,'');
+});
+
+test('GitHub Pages assets remain repository-relative and print CSS owns exact 4x6 pagination',()=>{
+ const index=fs.readFileSync('index.html','utf8'),css=fs.readFileSync('css/client-tools/b044-put-away-scan.css','utf8');
+ assert.match(index,/src="vendor\/qrcode\.min\.js"/);assert.match(index,/src="js\/client-tools\/b044\/put-away-scan\.js"/);
+ assert.doesNotMatch(index,/src="\/vendor\/qrcode\.min\.js"|src="\/js\/client-tools\/b044\/put-away-scan\.js"/);
+ assert.match(css,/@page \{ size:4in 6in; margin:0; \}/);
+ assert.match(css,/body\.pas-printing \{[^}]*width:4in!important;[^}]*margin:0!important;[^}]*padding:0!important/);
+ assert.match(css,/body\.pas-printing #pas-print-host \{[^}]*width:4in; margin:0; padding:0/);
+ assert.match(css,/\.pas-label:last-child \{ break-after:auto; page-break-after:auto; \}/);
 });
 
 test('deterministic preparation preserves distinct codes, excludes FD references and aggregates per package mentions',()=>{

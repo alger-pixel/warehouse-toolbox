@@ -46,7 +46,7 @@
 .pas-label-section:last-child { border-bottom:0; }.pas-label-section h3 { align-self:flex-start; margin:0; }
 .pas-label-section>strong { max-width:100%; font-size:15pt; line-height:1.15; overflow-wrap:anywhere; }
 .pas-qr { width:1.62in; height:1.62in; margin:.04in auto; background:#fff; }
-.pas-qr svg { display:block; width:100%; height:100%; shape-rendering:crispEdges; }
+.pas-qr svg,.pas-qr img { display:block; width:100%; height:100%; shape-rendering:crispEdges; }
 .pas-qr-error { display:grid; height:100%; place-items:center; border:2px solid #000; font-weight:700; }
 #pas-print-host { display:none; }
 .pas-scan-mode { position:fixed; z-index:1000; inset:0; display:grid; grid-template-rows:auto auto 1fr; padding:clamp(18px,3vw,38px); background:#173b64; color:#fff; transition:background 180ms ease; }
@@ -72,9 +72,10 @@
 
 @media print {
   @page { size:4in 6in; margin:0; }
+  body.pas-printing { width:4in!important; min-width:0!important; margin:0!important; padding:0!important; }
   body.pas-printing>*:not(#pas-print-host) { display:none!important; }
-  body.pas-printing #pas-print-host { display:block!important; }
-  body.pas-printing .pas-label { display:block; break-after:page; page-break-after:always; box-shadow:none; }
+  body.pas-printing #pas-print-host { display:block!important; width:4in; margin:0; padding:0; }
+  body.pas-printing .pas-label { display:block; margin:0; break-inside:avoid-page; page-break-inside:avoid; break-after:page; page-break-after:always; box-shadow:none; }
   body.pas-printing .pas-label:last-child { break-after:auto; page-break-after:auto; }
 }
 @media (max-width:900px) { .pas-overview { grid-template-columns:repeat(3,1fr); }.pas-preview-grid { grid-template-columns:1fr; }.pas-label.is-preview { max-width:4in; }.pas-file-summary { grid-template-columns:1fr; } }
