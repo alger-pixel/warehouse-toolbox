@@ -159,3 +159,67 @@ test('direct Repair re-entry persists visit identity across service reconstructi
  await assert.rejects(service.pause({...input,requestId:'missing-session-12345678'}),e=>e.code==='SESSION_NOT_FOUND');
 });
 test('TINECO committed snapshots log only positive part deltas and retries deduplicate',async()=>{const ledger=new Map(),partUsed={recordPartUsage:async input=>{if(!ledger.has(input.idempotencyKey))ledger.set(input.idempotencyKey,input);return ledger.get(input.idempotencyKey);}},f=fixture([unit('Pending',2)],{partUsed});await begin(f);const first={...form,partUsedDetail:'Motor\nFilter\nBrush'};await f.service.finish({requestId,outcome:'Can Not Be Fixed',data:first});await f.service.finish({requestId,outcome:'Can Not Be Fixed',data:first});assert.equal(ledger.size,1);let usage=[...ledger.values()][0];assert.equal(usage.partSku,'Brush');assert.equal(usage.quantity,1);assert.equal(usage.event,'TINECO TOC - REPAIR PART SCAN BY SN:ABC/123@T-_.#');assert.equal(usage.toolId,'CT-MKS66-TINECO-TOC-0001');await f.service.begin({requestId:nextId,sn:'ABC/123@T-_.#'});const second={...first,partUsedDetail:'Motor\nFilter\nBrush\nBrush'};await f.service.finish({requestId:nextId,outcome:'Can Not Be Fixed',data:second});assert.equal(ledger.size,2);usage=[...ledger.values()].at(-1);assert.equal(usage.partSku,'Brush');assert.equal(usage.quantity,1);});
+
+test('conflict reload reads latest same unit, preserves re-entry and fields, and resets server labor without Feishu writes',async()=>{
+ const usages=[],f=fixture([unit('Pending',2)],{partUsed:{recordPartUsage:async input=>usages.push(input)}}),started=await begin(f);
+ f.tick(26889*60000);Object.assign(f.data[0].fields,{'CURRENT STEP':3,'TIMES OF RE-ENTER':4,'LABOR MINUTES':12,'PART USED DETAIL':'Filter','TOTAL PARTS USED':1,'GENERAL NOTE':'latest history','PRE-QC NOTE':'latest note',[STEP_LABOR_FIELD]:JSON.stringify({version:1,preQc:2,repair:10,finalQc:0})});
+ const stale={requestId,from:1,to:2,data:form};await assert.rejects(f.service.step(stale),e=>e.code==='UNIT_RECORD_CONFLICT');
+ const before=structuredClone(f.data),writeCount=f.writes.length;const unrelated={requestId:'visit-unrelated-123456',sn:'OTHER',phase:'draft'};f.memory.set('visit:unrelated',unrelated);
+ let lookups=0;const list=f.records.listRecords;f.records.listRecords=async args=>{lookups++;return list(args);};
+ const input={requestId:nextId,sn:started.sn,recoverFrom:requestId},latest=await f.service.begin(input);
+ assert.equal(lookups,1);assert.equal(latest.step,2);assert.equal(latest.entry,4);assert.equal(latest.previousLaborMinutes,12);assert.equal(latest.data.partUsedDetail,'Filter');assert.equal(latest.data.preQcNote,'latest note');assert.equal(latest.generalNote,'latest history');assert.equal(latest.startedAt,started.startedAt+26889*60000);
+ assert.equal(f.writes.length,writeCount);assert.deepEqual(f.data,before);assert.equal(usages.length,0);assert.deepEqual(f.memory.get('visit:unrelated'),unrelated);
+ await f.service.begin(input);assert.equal(lookups,2);assert.equal(f.writes.length,writeCount);assert.equal(f.memory.get(`sn:${started.sn.toUpperCase()}`),nextId);
+ await assert.rejects(f.service.step(stale),e=>e.code==='SESSION_NOT_EDITABLE');assert.deepEqual(f.data,before);
+ f.tick(120000);await f.service.finish({requestId:nextId,outcome:'Completed',data:latest.data});
+ assert.equal(f.data[0].fields['LABOR MINUTES'],14);assert.equal(f.data[0].fields['TIMES OF RE-ENTER'],4);assert.equal(f.data[0].fields['PART USED DETAIL'],'Filter');assert.equal(usages.length,0);
+ assert.deepEqual(JSON.parse(f.data[0].fields[STEP_LABOR_FIELD]),{version:1,preQc:2,repair:10,finalQc:2});
+});
+
+test('conflict in a durable pending patch can be abandoned without replaying parts, notes, or labor',async()=>{
+ const usages=[],f=fixture([unit('Pending',2)],{partUsed:{recordPartUsage:async input=>usages.push(input)}});await begin(f);
+ const update=f.records.updateRecord;f.records.updateRecord=async()=>{throw Error('before write');};
+ const stale={requestId,from:1,to:2,data:{...form,partUsedDetail:'Motor\nFilter\nNEW'}};await assert.rejects(f.service.step(stale),/before write/);
+ Object.assign(f.data[0].fields,{'LABOR MINUTES':20,'GENERAL NOTE':'newer note'});await assert.rejects(f.service.step(stale),e=>e.code==='UNIT_RECORD_CONFLICT');
+ f.records.updateRecord=update;const before=structuredClone(f.data),count=f.writes.length;
+ const latest=await f.service.begin({requestId:nextId,sn:unit().fields.SN,recoverFrom:requestId});assert.equal(latest.data.partUsedDetail,'Motor\nFilter');assert.equal(latest.previousLaborMinutes,20);assert.equal(latest.generalNote,'newer note');assert.equal(latest.step,1);assert.equal(f.writes.length,count);assert.deepEqual(f.data,before);assert.equal(usages.length,0);
+ await assert.rejects(f.service.step(stale),e=>e.code==='SESSION_NOT_EDITABLE');assert.deepEqual(f.data,before);
+});
+
+for(const status of ['Completed','Disposal','EC Check','Awaiting Parts'])test(`reload preserves authoritative ${status} and never creates a return or re-entry`,async()=>{
+ const f=fixture([unit('Pending',2)]);await begin(f);f.data[0].fields['CLIENT STATUS']=status;
+ await assert.rejects(f.service.step({requestId,from:1,to:2,data:form}),e=>e.code==='UNIT_RECORD_CONFLICT');const before=structuredClone(f.data);
+ const latest=await f.service.begin({requestId:nextId,sn:unit().fields.SN,recoverFrom:requestId});assert.deepEqual(f.data,before);assert.equal(latest.clientStatus,status);assert.equal(latest.entry,2);assert.equal(latest.step,1);assert.equal(latest.phase,status==='Completed'?'completed':status==='Disposal'?'disposal':'draft');assert.equal(latest.clientReturnCount,0);
+ if(latest.phase==='draft'){await f.service.step({requestId:nextId,from:1,to:2,data:latest.data});assert.equal(f.data[0].fields['CURRENT STEP'],3);}
+});
+
+test('reload refuses a nonconflicting session, changed identity, or another active owner',async()=>{
+ const f=fixture([unit('Pending',2)]);await begin(f);const input={requestId:nextId,sn:unit().fields.SN,recoverFrom:requestId};
+ await assert.rejects(f.service.begin(input),e=>e.code==='CONFLICT_RECOVERY_REQUIRED');f.data[0].fields['LABOR MINUTES']=20;
+ await assert.rejects(f.service.step({requestId,from:1,to:2,data:form}),e=>e.code==='UNIT_RECORD_CONFLICT');
+ const before=structuredClone(f.data);await assert.rejects(f.service.begin({...input,sn:'OTHER'}),e=>e.code==='CONFLICT_RECOVERY_REQUIRED');
+ f.data[0].fields['UNIT ID']='OTHER';await assert.rejects(f.service.begin(input),e=>e.code==='UNIT_RECORD_CONFLICT');f.data[0].fields['UNIT ID']=before[0].fields['UNIT ID'];
+ f.memory.set(`sn:${unit().fields.SN.toUpperCase()}`,'another-active-owner');await assert.rejects(f.service.begin(input),e=>e.code==='UNIT_ALREADY_ACTIVE');assert.deepEqual(f.data,before);assert.equal(f.writes.length,1);
+});
+
+test('newer changes after reload still trigger optimistic concurrency protection',async()=>{
+ const f=fixture([unit('Pending',2)]);await begin(f);f.data[0].fields['LABOR MINUTES']=20;
+ await assert.rejects(f.service.step({requestId,from:1,to:2,data:form}),e=>e.code==='UNIT_RECORD_CONFLICT');await f.service.begin({requestId:nextId,sn:unit().fields.SN,recoverFrom:requestId});
+ f.data[0].fields['LABOR MINUTES']=25;const before=structuredClone(f.data);await assert.rejects(f.service.step({requestId:nextId,from:1,to:2,data:form}),e=>e.code==='UNIT_RECORD_CONFLICT');assert.deepEqual(f.data,before);
+});
+
+test('reload after a lost response re-reads authoritative fields and starts a current clock, not a multi-day cached clock',async()=>{
+ const f=fixture([unit('Pending',2)]);await begin(f);f.data[0].fields['LABOR MINUTES']=20;
+ const stale={requestId,from:1,to:2,data:form};await assert.rejects(f.service.step(stale),e=>e.code==='UNIT_RECORD_CONFLICT');
+ const input={requestId:nextId,sn:unit().fields.SN,recoverFrom:requestId},first=await f.service.begin(input),count=f.writes.length;
+ f.tick(30*24*60000);f.data[0].fields['GENERAL NOTE']='newer history';const resumed=await f.service.begin(input);
+ assert.equal(resumed.startedAt,first.startedAt+30*24*60000);assert.equal(resumed.generalNote,'newer history');assert.equal(f.writes.length,count);
+ f.tick(60000);await f.service.step({requestId:nextId,from:1,to:2,data:resumed.data});assert.equal(f.data[0].fields['LABOR MINUTES'],21);
+ const before=structuredClone(f.data);await assert.rejects(f.service.begin(input),e=>e.code==='SESSION_NOT_EDITABLE');assert.deepEqual(f.data,before);
+});
+
+test('definitive conflict stays rejected even if record state later returns to the old preimage',async()=>{
+ const f=fixture([unit('Pending',2)]);await begin(f);const before=structuredClone(f.data[0].fields),count=f.writes.length;
+ f.data[0].fields['LABOR MINUTES']=20;const stale={requestId,from:1,to:2,data:form};await assert.rejects(f.service.step(stale),e=>e.code==='UNIT_RECORD_CONFLICT');
+ f.data[0].fields=before;await assert.rejects(f.service.step(stale),e=>e.code==='UNIT_RECORD_CONFLICT');await assert.rejects(begin(f),e=>e.code==='UNIT_RECORD_CONFLICT');assert.equal(f.writes.length,count);assert.deepEqual(f.data[0].fields,before);
+});

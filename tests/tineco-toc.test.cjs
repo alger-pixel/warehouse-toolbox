@@ -1,7 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 function setup(saved=null) {
  const nodes=new Map();const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{innerHTML:'',value:'',textContent:'',focus(){},showModal(){this.open=true;},close(){this.open=false;},querySelector:node,querySelectorAll:()=>[],addEventListener(type,fn){this['on'+type]=fn;}});return nodes.get(selector);};
- let stored=saved;const calls=[];const window={crypto:{randomUUID:()=> 'visit-1234567890123456'},setInterval(){},clearInterval(){},confirm:()=>true,MkiteApiClient:{post:async(path,body)=>{calls.push({path,body});if(path.endsWith('/begin'))return {ok:true,data:{requestId:body.requestId,sn:body.sn,unitId:'TCU-20260908-0001',entry:1,phase:'draft',step:0,startedAt:Date.now(),data:{totalPartsUsed:'0'},repairLevels:['Level 1']}};return {ok:true,data:{...stored,pending:undefined,phase:path.endsWith('/cancel')?'cancelled':path.endsWith('/finish')?'saved':path.endsWith('/pause')?'paused':'draft',step:body.to??stored.step,data:body.data||stored.data,result:{sn:stored.sn,unitId:stored.unitId,entry:1,laborMinutes:1,pauseNote:body.pauseNote,repairResult:body.outcome}}};}}};
+ let stored=saved,uuid=0;const calls=[];const window={crypto:{randomUUID:()=>uuid++?'visit-next-1234567890':'visit-1234567890123456'},setInterval(){},clearInterval(){},confirm:()=>true,MkiteApiClient:{post:async(path,body)=>{calls.push({path,body});if(path.endsWith('/begin'))return {ok:true,data:{requestId:body.requestId,sn:body.sn,unitId:'TCU-20260908-0001',entry:1,phase:'draft',step:0,startedAt:Date.now(),data:{totalPartsUsed:'0'},repairLevels:['Level 1']}};return {ok:true,data:{...stored,pending:undefined,phase:path.endsWith('/cancel')?'cancelled':path.endsWith('/finish')?'saved':path.endsWith('/pause')?'paused':'draft',step:body.to??stored.step,data:body.data||stored.data,result:{sn:stored.sn,unitId:stored.unitId,entry:1,laborMinutes:1,pauseNote:body.pauseNote,repairResult:body.outcome}}};}}};
  vm.runInNewContext(fs.readFileSync('js/services/inventory-location-lookup.js','utf8'),{window});
  vm.runInNewContext(fs.readFileSync('js/client-tools/tineco-toc/tineco-toc.js','utf8'),{window});
  const module=window.MkiteClientToolModules['tineco.toc'];const ctx={root:node('root'),warehouse:'MKS66',clientId:'TINECO-TOC',storage:{get:()=>stored,set:(_,v)=>stored=structuredClone(v),remove:()=>stored=null},toast:{show(){}},audio:{success(){}}};module.init(ctx);
@@ -310,4 +310,51 @@ test('real shared API helper unwraps inventory endpoint top-level contract',asyn
   return {ok:true,status:200,json:async()=>({ok:true,sku:'9FWPT011100',total:1,locations:[location('FROM-API',3)]})};
  };
  vm.runInNewContext(fs.readFileSync('js/services/api-client.js','utf8'),{window:h.window});h.t.addPart('9FWPT011100');await flush();assert.match(h.node('#tcu-inventory-results').innerHTML,/FROM-API<\/td><td>1 \/ 3/);h.module.cleanup();
+});
+
+for(const action of ['step','finish','pause'])test(`${action} conflict is durable, never retries on refresh, and reload replaces only the active unit`,async()=>{
+ const h=setup();h.t.begin('TESTMYSN');await flush();h.t.move(1);await flush();
+ const originalId=h.saved.requestId;h.t.getSession().unitId='TCU-20260924-0002';h.t.getSession().startedAt=Date.now()-26889*60000;
+ h.t.addPart('UNSAVED');h.t.getSession().data.preQcNote='unsaved note';
+ const storage=new Map([[h.t.KEY,structuredClone(h.saved)],['other-tineco-session',{sn:'OTHER',pending:{action:'step'}}],['app.preference','keep']]);
+ h.ctx.storage={get:(key,fallback)=>structuredClone(storage.get(key)??fallback),set:(key,value)=>storage.set(key,structuredClone(value)),remove:key=>storage.delete(key)};
+ const requests=[];h.window.MkiteApiClient.post=async(path,body)=>{requests.push({path,body:structuredClone(body)});return {ok:false,error:{code:'UNIT_RECORD_CONFLICT',message:'Unit state changed outside this entry.'}};};
+ if(action==='step')h.t.move(2);else if(action==='finish')h.t.finish('Can Not Be Fixed');else await h.t.run('pause',{requestId:originalId,pauseNote:'break',data:h.t.getSession().data});
+ await flush();const stale=structuredClone(storage.get(h.t.KEY).pending);
+ assert.equal(storage.get(h.t.KEY).conflict.code,'UNIT_RECORD_CONFLICT');assert.equal(h.t.minutes(),0);
+ assert.match(statusHtml(h),/UNIT UPDATED/);assert.match(h.node('#tcu-app').innerHTML,/RELOAD LATEST UNIT STATE/);assert.doesNotMatch(h.node('#tcu-app').innerHTML,/tcu-retry|Unable to Switch Step|RETRY SAVE|tcu-success/);
+ await h.t.run(stale.action,stale.body);assert.equal(requests.length,1);
+ for(let i=0;i<2;i++){h.module.cleanup();h.module.init(h.ctx);await flush();assert.equal(requests.length,1);assert.match(statusHtml(h),/UNIT UPDATED/);}
+ const before=Date.now();const latest={requestId:'visit-next-1234567890',phase:'draft',sn:'TESTMYSN',unitId:'TCU-20260924-0002',recordId:'existing',entry:4,timesOfReEnter:4,step:2,clientStatus:'Pending',previousLaborMinutes:12,startedAt:before,resumed:true,generalNote:'server history',data:{partUsedDetail:'Filter',totalPartsUsed:'1',preQcNote:'server note',repairLevel:'Level 1'}};
+ h.window.MkiteApiClient.post=async(path,body)=>{requests.push({path,body:structuredClone(body)});assert.equal(path,'/api/tineco-toc/begin');assert.deepEqual(structuredClone(body),{requestId:latest.requestId,sn:'TESTMYSN',recoverFrom:originalId});return {ok:true,data:latest};};
+ await h.node('#tcu-reload-latest').onclick();
+ assert.equal(requests.length,2);assert.equal(storage.get(h.t.KEY).pending,undefined);assert.equal(storage.get(h.t.KEY).conflict,undefined);assert.equal(h.t.getSession().step,2);assert.match(statusHtml(h),/Final QC Ready/);
+ assert.equal(h.t.getSession().entry,4);assert.equal(h.t.getSession().previousLaborMinutes,12);assert.equal(h.t.minutes(),1);assert.deepEqual(structuredClone(h.t.getSession().data),latest.data);assert.equal(h.t.getSession().generalNote,'server history');
+ assert.deepEqual(storage.get('other-tineco-session'),{sn:'OTHER',pending:{action:'step'}});assert.equal(storage.get('app.preference'),'keep');
+ h.module.cleanup();h.module.init(h.ctx);await flush();assert.equal(requests.length,2);h.module.cleanup();
+});
+
+test('failed reload and lost acknowledgement keep the new recovery identity across refresh without automatic calls',async()=>{
+ const h=setup();h.t.begin('SN');await flush();
+ h.window.MkiteApiClient.post=async()=>({ok:false,error:{code:'UNIT_RECORD_CONFLICT',message:'changed'}});h.t.move(1);await flush();
+ const requests=[];h.window.MkiteApiClient.post=async(path,body)=>{requests.push({path,body:structuredClone(body)});throw Error('lost acknowledgement');};
+ await h.t.reloadLatest();const recovery=structuredClone(h.saved.conflict.recoveryBody);assert.equal(h.saved.pending.action,'begin');assert.equal(h.saved.pending.body.recoverFrom,'visit-1234567890123456');
+ h.module.cleanup();h.module.init(h.ctx);await flush();assert.equal(requests.length,1);assert.doesNotMatch(h.node('#tcu-app').innerHTML,/tcu-retry/);
+ await h.t.reloadLatest();assert.equal(requests.length,2);assert.deepEqual(requests[1].body,recovery);
+ h.window.MkiteApiClient.post=async()=>({ok:true,data:{}});await h.t.reloadLatest();assert.ok(h.saved.conflict);assert.match(statusHtml(h),/UNIT UPDATED/);
+ h.window.MkiteApiClient.post=async()=>({ok:false,error:{code:'UNIT_RECORD_CONFLICT',message:'ownership changed'}});await h.t.reloadLatest();assert.deepEqual(h.saved.conflict.recoveryBody,recovery);assert.equal(h.saved.conflict.requestId,recovery.recoverFrom);h.module.cleanup();
+});
+
+test('real HTTP 409 is classified as conflict with explicit reload instead of Retry',async()=>{
+ const h=setup();h.t.begin('SN');await flush();h.window.MkiteApiConfig={baseUrl:'https://api.example'};
+ let count=0;h.window.fetch=async()=>{count++;return {ok:false,status:409,json:async()=>({ok:false,error:{code:'UNIT_RECORD_CONFLICT',message:'Unit state changed outside this entry.',retryable:false}})};};
+ vm.runInNewContext(fs.readFileSync('js/services/api-client.js','utf8'),{window:h.window});h.t.move(1);await flush();assert.equal(h.saved.conflict.code,'UNIT_RECORD_CONFLICT');assert.match(statusHtml(h),/UNIT UPDATED/);
+ h.module.cleanup();h.module.init(h.ctx);await flush();assert.equal(count,1);h.module.cleanup();
+});
+
+test('reload refuses a successful response for another unit and retains the recovery lock',async()=>{
+ const h=setup();h.t.begin('SN');await flush();const original=structuredClone(h.saved);
+ h.window.MkiteApiClient.post=async()=>({ok:false,error:{code:'UNIT_RECORD_CONFLICT',message:'changed'}});h.t.move(1);await flush();
+ h.window.MkiteApiClient.post=async(path,body)=>({ok:true,data:{...original,requestId:body.requestId,unitId:'DIFFERENT-UNIT'}});
+ await h.t.reloadLatest();assert.equal(h.saved.unitId,original.unitId);assert.ok(h.saved.conflict);assert.match(h.node('#tcu-app').innerHTML,/Reload did not confirm the same unit/);assert.doesNotMatch(h.node('#tcu-app').innerHTML,/tcu-retry/);h.module.cleanup();
 });

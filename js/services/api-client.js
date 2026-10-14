@@ -11,6 +11,7 @@
         operationState: typeof source.operationState === 'string' ? source.operationState : undefined,
         message: String(source.message || "The server could not complete the request."),
         errors: Array.isArray(source.errors) ? source.errors : Array.isArray(payload?.errors) ? payload.errors : [],
+        details: payload && payload.details && typeof payload.details === 'object' ? payload.details : source.details && typeof source.details === 'object' ? source.details : {},
         retryable: source.retryable !== false && response.status >= 500
       },
       records: payload && Array.isArray(payload.records) ? payload.records : []
@@ -27,15 +28,26 @@
     }
   }
 
+  function apiBase(path) {
+    const config = window.MkiteApiConfig;
+    return path.startsWith("/api/users/") && config.userManagementBaseUrl
+      ? config.userManagementBaseUrl : config.baseUrl;
+  }
+  function url(path) {
+    const baseUrl = apiBase(path);
+    if (!baseUrl) throw new Error("The secure MKITE API endpoint is not configured.");
+    window.MkiteApiEnvironment?.assertSafeApiBase(window.location?.hostname, baseUrl);
+    return `${baseUrl.replace(/\/$/, "")}${path}`;
+  }
+
   async function request(method,path,body,options={}) {
-      const config = window.MkiteApiConfig;
-      const baseUrl = path.startsWith("/api/users/") && config.userManagementBaseUrl
-        ? config.userManagementBaseUrl : config.baseUrl;
+      const baseUrl = apiBase(path);
       if (!baseUrl) return { ok: false, error: { code: "API_NOT_CONFIGURED", message: "The secure MKITE API endpoint is not configured.", retryable: false } };
-      try { window.MkiteApiEnvironment?.assertSafeApiBase(window.location?.hostname, baseUrl); }
+      let requestUrl;
+      try { requestUrl = url(path); }
       catch { return { ok: false, error: { code: "API_CONFIGURATION_ERROR", message: "Production API configuration is invalid.", retryable: false } }; }
       try {
-        const response = await window.fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+        const response = await window.fetch(requestUrl, {
           method,
           headers: { "Content-Type": "application/json", ...(options.authorization ? { Authorization: options.authorization } : {}) },
           ...(method==='GET'?{}:{body: JSON.stringify(body)})
@@ -50,6 +62,7 @@
       }
   }
   window.MkiteApiClient = {
+    url,
     get:(path,options)=>request('GET',path,undefined,options),
     post:(path,body,options)=>request('POST',path,body,options),
     patch:(path,body,options)=>request('PATCH',path,body,options)
