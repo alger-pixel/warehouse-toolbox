@@ -65,8 +65,8 @@ test('frontend routes all PL requests through secure API and exports exception r
   const XLSX = require('../vendor/xlsx.full.min.js');
   const window = { XLSX: { ...XLSX, writeFile: book => { workbook = book; } }, MkiteApiConfig: { mode: 'live' }, MkiteApiClient: { post: async (path, body) => { calls.push({ path, body }); return { ok: true, data: body }; } } };
   vm.runInNewContext(fs.readFileSync('vendor/JsBarcode.code128.min.js','utf8'),{window});vm.runInNewContext(fs.readFileSync('js/client-tools/b044/picking-workflow.js', 'utf8'), { window, document: {} });
-  for (const action of ['prepare', 'create', 'startProcess', 'complete', 'cancel']) await window.MkiteB044Picking[action]({ test: true });
-  assert.deepEqual(calls.map(c => c.path), ['/api/b044/put-away/prepare', '/api/b044/put-away/create-picking-list', '/api/b044/put-away/start-process', '/api/b044/put-away/complete-package', '/api/b044/put-away/cancel-picking-list']);
+  for (const action of ['prepare', 'recover', 'create', 'startProcess', 'complete', 'cancel']) await window.MkiteB044Picking[action]({ test: true });
+  assert.deepEqual(calls.map(c => c.path), ['/api/b044/put-away/prepare', '/api/b044/put-away/recover', '/api/b044/put-away/create-picking-list', '/api/b044/put-away/start-process', '/api/b044/put-away/complete-package', '/api/b044/put-away/cancel-picking-list']);
   window.MkiteB044Picking.exportExceptions([{ trackingNumber: '001', reason: 'NOT FOUND IN MKITE PACKAGE CLASS' }, { trackingNumber: '002', reason: 'STATUS Processing' }, { trackingNumber: '003', reason: 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS' }]);
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets.Exceptions);
   assert.equal(rows[2].REASON, 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS');
@@ -90,6 +90,31 @@ test('creation retry retains the original operation and source rows after 409 an
   await h.tool.createPickingList();
   assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]);
   assert.equal(requests[1].requestId, 'operation-123456789');
+});
+test('fresh browser discovers and resumes the authoritative Picking List after PACKAGE_RESERVED without creating again', async () => {
+  const h = setup(); const state = h.tool.getState(); state.pl = null; state.creationRequestId = null;
+  state.prepared = { packages: state.packages, eligible: state.packages, exceptions: [] };
+  h.window.confirm = () => true; h.window.crypto = { randomUUID: () => 'new-browser-request-1' };
+  let creates = 0, recoveries = 0, reconciles = 0;
+  h.window.MkiteB044Picking.create = async () => { creates += 1; throw Object.assign(Error('PACKAGE_RESERVED: reserved'), { code: 'PACKAGE_RESERVED' }); };
+  h.window.MkiteB044Picking.recover = async body => { recoveries += 1; assert.equal(body.rows.length, 1); return { operational: true, phase: 'operational', requestId: 'original-operation-1', pickingListNumber: 'B044-PL-20261014-0009', pickingListRecordId: 'master-original', packages: state.packages, exceptions: [], succeeded: ['rec1'], failed: [], pendingCount: 0 }; };
+  h.window.MkiteB044Picking.reconcile = async () => { reconciles += 1; return { executionAllowed: true, packages: [{ packageRecordId: 'rec1', packageStatus: 'Processing', ownershipValid: true, completedAt: null, reconciliationRequired: false }] }; };
+  await h.tool.createPickingList();
+  assert.equal(creates, 1); assert.equal(recoveries, 1); assert.equal(state.pl, null); assert.equal(state.creationRequestId, null);
+  assert.match(h.root.innerHTML, /Existing Picking List Found/); assert.match(h.root.innerHTML, /B044-PL-20261014-0009/); assert.match(h.root.innerHTML, /RESUME PICKING LIST/);
+  await h.tool.resumeExistingPickingList();
+  assert.equal(creates, 1); assert.equal(reconciles, 1); assert.equal(state.creationRequestId, 'original-operation-1'); assert.equal(state.pl.pickingListRecordId, 'master-original');
+  assert.match(h.root.innerHTML, /Ready for Scan &amp; Print/);
+});
+test('authoritative recovery network failure preserves retry and succeeds on the next attempt', async () => {
+  const h = setup(); const state = h.tool.getState(); state.pl = null; state.creationRequestId = null;
+  state.prepared = { packages: state.packages, eligible: state.packages, exceptions: [] };
+  h.window.confirm = () => true; h.window.crypto = { randomUUID: () => 'recovery-retry-request' };
+  h.window.MkiteB044Picking.create = async () => { throw Object.assign(Error('PACKAGE_RESERVED: reserved'), { code: 'PACKAGE_RESERVED' }); };
+  let attempts = 0;
+  h.window.MkiteB044Picking.recover = async () => { attempts += 1; if (attempts === 1) throw Error('Connection lost'); return { operational: true, phase: 'operational', requestId: 'original-retry-operation', pickingListNumber: 'B044-PL-20261014-0010', pickingListRecordId: 'master-retry', packages: state.packages, exceptions: [], succeeded: ['rec1'], failed: [], pendingCount: 0 }; };
+  await h.tool.createPickingList(); assert.match(state.workflowError, /Connection lost/); assert.equal(state.recoveryCandidate, null);
+  await h.tool.createPickingList(); assert.equal(attempts, 2); assert.equal(state.recoveryCandidate.requestId, 'original-retry-operation'); assert.match(h.root.innerHTML, /RESUME PICKING LIST/);
 });
 
 test('API and Picking List helper retain normalized conflict code, stage and state', async () => {

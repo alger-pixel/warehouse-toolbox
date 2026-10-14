@@ -9,7 +9,7 @@ const env = { ALLOWED_ORIGINS: ALLOWED_ORIGINS.join(",") };
 
 test('B044 endpoints enforce POST, preserve localhost CORS and forward mutations to coordinator', async () => {
   const configured = { ...env, FEISHU_APP_ID: 'app', FEISHU_APP_SECRET: 'secret', FEISHU_BASE_APP_TOKEN: 'base', FEISHU_PACKAGE_TABLE_ID: 'packages', FEISHU_CLIENT_TABLE_ID: 'clients', FEISHU_PICKING_LIST_TABLE_ID: 'lists' };
-  for (const endpoint of ['prepare', 'create-picking-list', 'start-process', 'complete-package', 'cancel-picking-list']) {
+  for (const endpoint of ['prepare', 'recover', 'create-picking-list', 'start-process', 'complete-package', 'cancel-picking-list']) {
     const url = `https://api.example/api/b044/put-away/${endpoint}`;
     assert.equal((await handleRequest(new Request(url), env)).status, 405);
     const headers = { Origin: 'http://localhost:5501', 'Content-Type': 'application/json' };

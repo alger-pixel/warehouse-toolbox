@@ -38,7 +38,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
   function validateInput(input) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) fail('INVALID_INPUT', 'Provide a JSON object.');
   }
-  async function prepare(input) {
+  async function prepare(input, includeReservationIdentity = false) {
     validateInput(input);
     const rows = normalizeRows(input.rows);
     const inventory = await records.listRecords({ ...args, fieldNames: Object.values(F) });
@@ -53,14 +53,14 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       const active = matches.filter(record => record.fields?.[F.status] === 'Active');
       const matchType = exact.length ? 'EXACT' : matches.length ? 'PARTIAL' : 'NONE';
       const eligibility = !matches.length ? 'NOT_FOUND' : !active.length ? 'BLOCKED_STATUS' : active.length > 1 ? 'AMBIGUOUS' : 'ELIGIBLE';
-      const record = eligibility === 'ELIGIBLE' ? active[0] : undefined;
+      const record = matches.length === 1 ? matches[0] : undefined;
       const fields = record?.fields || {};
       const packageStatus = record ? cleanText(fields[F.status]) : matches.map(r => cleanText(r.fields?.[F.status])).join(', ');
       // Operational identity must be the stored SKU, never the shortened/wrapped Excel query.
       // Keep the source value for auditing; downstream scan and lifecycle checks stay strict.
       return { ...row, sourceTrackingNumber: row.trackingNumber,
         ...(record ? { trackingNumber: cleanText(fields[F.sku]), normalizedTracking: normalizeSku(fields[F.sku]) } : {}),
-        packageRecordId: record?.record_id || '', currentLocation: cleanText(fields[F.location]), packageStatus, eligibility, matchType,
+        packageRecordId: eligibility === 'ELIGIBLE' ? record?.record_id || '' : '', ...(includeReservationIdentity && record ? { reservationRecordId: record.record_id } : {}), currentLocation: cleanText(fields[F.location]), packageStatus, eligibility, matchType,
         reason: eligibility === 'NOT_FOUND' ? 'NOT FOUND IN MKITE PACKAGE CLASS' : eligibility === 'AMBIGUOUS' ? `AMBIGUOUS ${matchType} MATCH — MULTIPLE ACTIVE PACKAGE RECORDS` : eligibility === 'BLOCKED_STATUS' ? `STATUS ${packageStatus || 'EMPTY'}` : '' };
     });
     // Different Excel queries can resolve to the same package. Do not assign it twice.
@@ -115,14 +115,15 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     await validateStatusWrite('Processing');
     if (!job) {
       options.onStage?.('RECHECK_ELIGIBILITY');
-      const prepared = await prepare({ rows });
+      const prepared = await prepare({ rows }, true);
       options.onStage?.('CHECK_ELIGIBILITY', { eligibleCount: prepared.eligible.length });
-      if (!prepared.eligible.length) fail('NO_ELIGIBLE_PACKAGES', 'No Active packages remain eligible. Refresh inventory matching.');
       options.onStage?.('CHECK_PACKAGE_RESERVATIONS');
-      for (const row of prepared.eligible) {
-        const owner = await storage.get(`reserved:${row.packageRecordId}`);
+      for (const row of prepared.packages.filter(row => row.reservationRecordId)) {
+        const owner = await storage.get(`reserved:${row.reservationRecordId}`);
         if (owner && (await storage.get(`job:${owner}`))?.phase !== 'cancelled') fail('PACKAGE_RESERVED', 'A package already belongs to an in-progress or existing Picking List. Resume the original operation; do not create a new one.');
       }
+      for (const row of prepared.packages) delete row.reservationRecordId;
+      if (!prepared.eligible.length) fail('NO_ELIGIBLE_PACKAGES', 'No Active packages remain eligible. Refresh inventory matching.');
       const createdAt = new Date(now()).toISOString();
       const date = new Intl.DateTimeFormat('en-CA', { timeZone: config.warehouseTimeZone || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(createdAt)).replaceAll('-', '');
       const pickingListNumber = await pickingLists.nextNumber('B044', date);
@@ -155,6 +156,36 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     if (job.succeeded.length === job.rows.length) job.phase = 'operational';
     options.onStage?.('CHECKPOINT_ASSIGNMENT', { operationState: job.phase });
     await storage.put(key, job); return publicJob(job);
+  }
+  async function recover(input) {
+    validateInput(input);
+    const rows = normalizeRows(input.rows);
+    const inventory = await records.listRecords({ ...args, fieldNames: Object.values(F) });
+    const bySku = new Map();
+    for (const record of inventory) { const sku = normalizeSku(record.fields?.[F.sku]); if (!bySku.has(sku)) bySku.set(sku, []); bySku.get(sku).push(record); }
+    const resolved = [];
+    for (const row of rows) {
+      const exact = bySku.get(row.normalizedTracking) || [];
+      const matches = exact.length ? exact : [...bySku.entries()].filter(([sku]) => sku && (sku.includes(row.normalizedTracking) || row.normalizedTracking.includes(sku))).flatMap(([, candidates]) => candidates);
+      if (matches.length > 1) fail('RECOVERY_PACKAGE_AMBIGUOUS', 'Uploaded packages do not resolve uniquely. Automatic Picking List recovery is blocked.');
+      if (matches.length === 1) resolved.push(matches[0]);
+    }
+    if (!resolved.length) fail('RECOVERY_NOT_FOUND', 'No existing Picking List ownership was found for the uploaded packages.');
+    const unique = [...new Map(resolved.map(record => [record.record_id, record])).values()];
+    const ownership = await Promise.all(unique.map(async record => ({ record, owner: await storage.get(`reserved:${record.record_id}`) })));
+    const owners = new Set(ownership.map(item => item.owner).filter(Boolean));
+    if (owners.size > 1) fail('MULTIPLE_PICKING_LIST_OWNERS', 'Uploaded packages belong to multiple existing Picking Lists. Automatic recovery is blocked.');
+    if (!owners.size) fail('RECOVERY_NOT_FOUND', 'No active Picking List owns the uploaded packages.');
+    if (ownership.some(item => !item.owner)) fail('MIXED_PACKAGE_OWNERSHIP', 'Some uploaded packages belong to an existing Picking List while others are unreserved. Automatic recovery is blocked.');
+    const requestId = [...owners][0], job = await storage.get(`job:${requestId}`);
+    if (!job) fail('RECOVERY_NOT_FOUND', 'The authoritative Picking List operation could not be loaded.');
+    const uploadedIds = new Set(unique.map(record => record.record_id)), jobIds = new Set((job.rows || []).map(row => row.packageRecordId));
+    if (uploadedIds.size !== jobIds.size || [...uploadedIds].some(id => !jobIds.has(id))) fail('MIXED_PACKAGE_OWNERSHIP', 'The uploaded package set does not exactly match the existing Picking List. Automatic recovery is blocked.');
+    if (job.phase === 'cancelled') fail('PICKING_LIST_TERMINAL', 'The uploaded packages belong to a cancelled Picking List. It cannot be resumed.');
+    if (!['assigning', 'operational', 'cancelling'].includes(job.phase)) fail('PICKING_LIST_RECOVERY_BLOCKED', 'The existing Picking List is not in a safely recoverable state.');
+    if (job.phase === 'operational' && ownership.every(({ record }) => record.fields?.[F.status] === 'Processed')) fail('PICKING_LIST_TERMINAL', 'The uploaded packages belong to a completed Picking List. It cannot be resumed.');
+    if (input.resume === true && job.phase === 'assigning') return create({ requestId: job.requestId, rows: JSON.parse(job.fingerprint) });
+    return publicJob(job);
   }
   async function reconcile(input) {
     validateInput(input);
@@ -344,5 +375,5 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     }
     return publicJob(job);
   }
-  return { prepare, create, startProcess, complete, cancel, reconcile, adminRecover: input => recoverBrokenPickingList(input, config, records, storage, now) };
+  return { prepare, create, recover, startProcess, complete, cancel, reconcile, adminRecover: input => recoverBrokenPickingList(input, config, records, storage, now) };
 }

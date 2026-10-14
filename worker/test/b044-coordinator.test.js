@@ -104,7 +104,7 @@ test('completed PL is returned on retry and cannot be recreated with a new opera
   const resumed = (await (await f.send()).json()).data;
   assert.ok(resumed.packages.every(r => r.completedAt)); assert.equal(f.masters.length, 1);
   const recreated = await f.send({ ...f.input, requestId: 'new-operation-123456' });
-  assert.equal(recreated.status, 409); assert.equal((await recreated.json()).error.code, 'NO_ELIGIBLE_PACKAGES');
+  assert.equal(recreated.status, 409); assert.equal((await recreated.json()).error.code, 'PACKAGE_RESERVED');
   assert.equal(f.events.filter(e => e === 'upload').length, 0);
 });
 
@@ -161,6 +161,11 @@ test('public reconcile endpoint dispatches read-only lookup without creation req
  f.packages[0].fields.STATUS='Processed';const before=structuredClone(f.memory);f.events.length=0;
  const response=await f.send({pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId},'reconcile'),body=await response.json();
  assert.equal(response.status,200);assert.equal(body.data.completedCount,1);assert.equal(body.data.remainingCount,5);assert.equal(f.events.includes('update'),false);assert.deepEqual(f.memory,before);
+});
+test('public recover endpoint returns the original durable job without creating another master',async t=>{
+ const f=fixture(t),created=(await (await f.send()).json()).data,masters=f.masters.length;
+ const response=await f.send({rows:f.input.rows},'recover'),body=await response.json();
+ assert.equal(response.status,200);assert.equal(body.data.requestId,f.input.requestId);assert.equal(body.data.pickingListNumber,created.pickingListNumber);assert.equal(f.masters.length,masters);
 });
 
 test('admin recovery denies absent/wrong key at public and coordinator boundaries',async t=>{

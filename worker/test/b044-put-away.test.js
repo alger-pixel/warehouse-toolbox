@@ -78,6 +78,39 @@ test('lost update acknowledgement is recovered by rereading status and exact PL 
 test('creation request cannot be reused for different rows', async () => {
   const f = fixture(); await f.service().create(f.input); await assert.rejects(f.service().create({ ...f.input, rows: [source('B')] }), e => e.code === 'REQUEST_ID_CONFLICT');
 });
+test('authoritative recovery finds the original active job without browser request identity or writes', async () => {
+  const f = fixture([packageRecord('A'), packageRecord('B')]); f.input.rows = [source('A'), source('B')];
+  const created = await f.service().create(f.input), before = structuredClone(f.data); f.events.length = 0;
+  const recovered = await f.service().recover({ rows: f.input.rows });
+  assert.equal(recovered.requestId, f.input.requestId); assert.equal(recovered.pickingListNumber, created.pickingListNumber); assert.equal(recovered.operational, true);
+  assert.deepEqual(f.data, before); assert.deepEqual(f.events, ['list-packages']);
+});
+test('confirmed recovery resumes assignment from the durable source fingerprint', async () => {
+  const f = fixture(); await f.service().create(f.input);
+  const job = f.memory.get(`job:${f.input.requestId}`); job.phase = 'assigning'; job.succeeded = [];
+  const recovered = await f.service().recover({ rows: [{ ...f.input.rows[0], commandRaw: 'different browser result' }], resume: true });
+  assert.equal(recovered.operational, true); assert.equal(recovered.requestId, f.input.requestId); assert.equal(recovered.packages[0].commandRaw, undefined);
+});
+test('recovery blocks mixed unreserved packages and packages owned by multiple Picking Lists', async () => {
+  const mixed = fixture([packageRecord('A'), packageRecord('B')]); await mixed.service().create({ ...mixed.input, rows: [source('A')] });
+  await assert.rejects(mixed.service().recover({ rows: [source('A'), source('B')] }), error => error.code === 'MIXED_PACKAGE_OWNERSHIP');
+  const multiple = fixture([packageRecord('A'), packageRecord('B')]);
+  await multiple.service().create({ ...multiple.input, rows: [source('A')] });
+  await multiple.service().create({ ...multiple.input, requestId: 'second-operation-1234', rows: [source('B')] });
+  await assert.rejects(multiple.service().recover({ rows: [source('A'), source('B')] }), error => error.code === 'MULTIPLE_PICKING_LIST_OWNERS');
+});
+test('recovery rejects terminal jobs and returns cancellation-in-progress for safe retry', async () => {
+  const cancelled = fixture(); const pl = await cancelled.service().create(cancelled.input);
+  await cancelled.service().cancel({ requestId: cancelled.input.requestId, pickingListNumber: pl.pickingListNumber });
+  await assert.rejects(cancelled.service().recover({ rows: cancelled.input.rows }), error => error.code === 'PICKING_LIST_TERMINAL');
+  const cancelling = fixture(); await cancelling.service().create(cancelling.input);
+  cancelling.memory.get(`job:${cancelling.input.requestId}`).phase = 'cancelling';
+  const recovered = await cancelling.service().recover({ rows: cancelling.input.rows });
+  assert.equal(recovered.phase, 'cancelling'); assert.equal(recovered.requestId, cancelling.input.requestId);
+  const completed = fixture(); const completedPl = await completed.service().create(completed.input);
+  await completed.service().complete({ pickingListNumber: completedPl.pickingListNumber, pickingListRecordId: completedPl.pickingListRecordId, packageRecordId: completedPl.packages[0].packageRecordId, trackingNumber: completedPl.packages[0].trackingNumber, confirmationTracking: completedPl.packages[0].trackingNumber });
+  await assert.rejects(completed.service().recover({ rows: completed.input.rows }), error => error.code === 'PICKING_LIST_TERMINAL');
+});
 test('generic number collision retries and generic XLSX supports arbitrary columns and literal text', async () => {
   const values = ['CLASH', 'NEXT']; const service = createPickingListService(config, { listRecords: async () => [{ fields: { 'PICKING LIST NUMBER': 'OTHER-PL-20260905-CLASH' } }] }, { randomId: () => values.shift() });
   assert.equal(await service.nextNumber('OTHER', '20260905'), 'OTHER-PL-20260905-NEXT');
