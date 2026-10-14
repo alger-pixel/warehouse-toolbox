@@ -51,6 +51,34 @@ test('true begin failure shows retry and cancel; retry reuses identity and unloc
  assert.match(h.node('#tcu-app').innerHTML,/UNABLE TO START REPAIR VISIT/);assert.match(h.node('#tcu-app').innerHTML,/RETRY START/);assert.match(h.node('#tcu-app').innerHTML,/id="tcu-cancel-start"/);assert.match(h.node('#tcu-app').innerHTML,/<fieldset disabled>/);
  h.window.MkiteApiClient.post=normal;await h.t.run('begin',pending.body);assert.deepEqual(h.calls[0].body,pending.body);assert.equal(h.saved.pending,undefined);assert.doesNotMatch(h.node('#tcu-app').innerHTML,/<fieldset disabled>/);h.module.cleanup();
 });
+for(const step of [0,1])test(`UNIT_ALREADY_ACTIVE recovers authoritative ${step===0?'Pre-QC':'Repair'} visit without local state`,async()=>{
+ const h=setup(),active={requestId:'server-active-12345678',recordId:'existing',unitId:'TCU-existing',sn:'SN',entry:4,timesOfReEnter:4,step,startedAt:Date.now()-11*60000,phase:'draft',clientStatus:'Pending',previousLaborMinutes:27,resumed:true,data:{trackingNumber:'TRACK',issueFound:'Saved issue',preQcNote:'Saved note',partUsedDetail:'Motor\nFilter',totalPartsUsed:'2',repairLevel:'Level 1'},repairLevels:['Level 1']};
+ h.window.MkiteApiClient.post=async(path,body)=>{h.calls.push({path,body:structuredClone(body)});if(path.endsWith('/begin'))return {ok:false,error:{code:'UNIT_ALREADY_ACTIVE',message:'This SN already has an active entry.'}};return {ok:true,data:active};};
+ h.t.begin('SN');await flush();assert.deepEqual(h.calls.map(call=>call.path),['/api/tineco-toc/begin','/api/tineco-toc/resume']);assert.deepEqual(h.calls[1].body,{sn:'SN'});
+ assert.equal(h.saved.requestId,active.requestId);assert.equal(h.saved.step,step);assert.equal(h.saved.previousLaborMinutes,27);assert.equal(h.saved.startedAt,active.startedAt);assert.equal(h.saved.entry,4);assert.match(h.node('#tcu-app').innerHTML,/EXISTING UNIT FOUND/);assert.doesNotMatch(h.node('#tcu-app').innerHTML,/Unable to Load Unit/);
+ assert.ok(h.t.minutes()>=11);h.module.cleanup();
+});
+test('active recovery displays a temporary recovery state and never sends a second begin',async()=>{
+ const h=setup();let release;
+ h.window.MkiteApiClient.post=async(path,body)=>{h.calls.push({path,body:structuredClone(body)});if(path.endsWith('/begin'))return {ok:false,error:{code:'UNIT_ALREADY_ACTIVE',message:'active'}};return new Promise(resolve=>release=resolve);};
+ h.t.begin('SN');await flush();assert.match(statusHtml(h),/Existing Active Visit Found/);assert.match(statusHtml(h),/Loading the existing visit/);assert.equal(h.calls.filter(call=>call.path.endsWith('/begin')).length,1);
+ release({ok:true,data:{requestId:'server-active-12345678',unitId:'TCU-existing',sn:'SN',entry:2,step:0,startedAt:Date.now(),phase:'draft',data:{totalPartsUsed:'0'}}});await flush();assert.equal(h.saved.requestId,'server-active-12345678');h.module.cleanup();
+});
+test('failed active recovery stays controlled, retries only resume, and cannot create a duplicate',async()=>{
+ const h=setup();let resumes=0;
+ h.window.MkiteApiClient.post=async(path,body)=>{h.calls.push({path,body:structuredClone(body)});if(path.endsWith('/begin'))return {ok:false,error:{code:'UNIT_ALREADY_ACTIVE',message:'active'}};resumes++;return {ok:false,error:{code:'ACTIVE_VISIT_NOT_FOUND',message:'Unable to resolve active visit.'}};};
+ h.t.begin('SN');await flush();assert.equal(h.saved.pending.action,'resume');assert.match(statusHtml(h),/Active Visit Found — Unable to Resume/);assert.match(h.node('#tcu-app').innerHTML,/RETRY \/ RESUME/);
+ await h.t.run(h.saved.pending.action,h.saved.pending.body);assert.equal(resumes,2);assert.equal(h.calls.filter(call=>call.path.endsWith('/begin')).length,1);assert.equal(h.saved.pending.action,'resume');h.module.cleanup();
+});
+test('active recovery preserves an authoritatively completed pending outcome',async()=>{
+ const h=setup(),saved={requestId:'server-active-12345678',unitId:'TCU-existing',sn:'SN',entry:3,step:1,startedAt:Date.now()-60000,phase:'saved',clientStatus:'Awaiting Parts',previousLaborMinutes:19,data:{partUsedDetail:'Motor',totalPartsUsed:'1',repairLevel:'Level 1'},result:{sn:'SN',unitId:'TCU-existing',repairResult:'Awaiting Parts',laborMinutes:19,entry:3,resumeStep:1}};
+ h.window.MkiteApiClient.post=async path=>path.endsWith('/begin')?{ok:false,error:{code:'UNIT_ALREADY_ACTIVE',message:'active'}}:{ok:true,data:saved};
+ h.t.begin('SN');await flush();assert.equal(h.saved.phase,'saved');assert.match(h.node('#tcu-app').innerHTML,/AWAITING PARTS/);assert.match(h.node('#tcu-app').innerHTML,/LABOR MINUTES/);assert.match(h.node('#tcu-app').innerHTML,/19/);h.module.cleanup();
+});
+test('unrelated begin errors retain generic failure handling and never call active resume',async()=>{
+ const h=setup();h.window.MkiteApiClient.post=async(path)=>{h.calls.push({path});return {ok:false,error:{code:'OTHER_CONFLICT',message:'Other failure'}};};h.t.begin('SN');await flush();
+ assert.match(statusHtml(h),/Unable to Load Unit/);assert.equal(h.calls.length,1);assert.equal(h.saved.pending.action,'begin');h.module.cleanup();
+});
 test('malformed HTTP success retains recoverable start instead of enabling an invalid visit',async()=>{
  const h=setup();h.window.MkiteApiClient.post=async()=>({ok:true,data:{}});h.t.begin('SN');await flush();assert.equal(h.saved.pending.action,'begin');assert.match(h.node('#tcu-app').innerHTML,/INVALID_VISIT_RESPONSE/);assert.match(h.node('#tcu-app').innerHTML,/UNABLE TO START/);
  await h.node('#tcu-cancel-start').onclick();assert.equal(h.saved.pending.action,'begin');h.module.cleanup();

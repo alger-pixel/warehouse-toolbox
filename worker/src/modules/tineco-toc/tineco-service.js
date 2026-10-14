@@ -73,6 +73,12 @@ export function createTinecoService(config,records,storage,{now=()=>Date.now(),p
    await storage.put(reservation(source.sn),j.requestId);return view(j);
  }
  return {
+ async resume(input){const sn=text(input?.sn);if(!sn)fail('SN_REQUIRED','Scan or enter the serial number.',400);if(sn.length>500)fail('SN_INVALID','Serial number is too long.',400);
+   const owner=await storage.get(reservation(sn));if(!owner)fail('ACTIVE_VISIT_NOT_FOUND','No active visit was found for this SN.',404);
+   let j=await storage.get(`visit:${owner}`);if(!j||j.model!==2||norm(j.sn)!==norm(sn)||j.conflict||!['draft'].includes(j.phase))fail('ACTIVE_VISIT_NOT_FOUND','No resumable active visit was found for this SN.',404);
+   if(j.mutation){await apply(j);j=await storage.get(`visit:${owner}`);}else await owned(j);
+   return {...view(j),resumed:true,activeVisitRecovered:true};
+ },
  async begin(input){const id=key(input),sn=text(input.sn);if(!sn)fail('SN_REQUIRED','Scan or enter the serial number.',400);if(sn.length>500)fail('SN_INVALID','Serial number is too long.',400);
    if(input.recoverFrom)return recover(input);
    const old=await storage.get(id);if(old){if(old.model!==2)fail('SESSION_MODEL_CHANGED','This entry belongs to the old visit model. Resolve the old draft first.');if(norm(old.sn)!==norm(sn))fail('DUPLICATE_SAVE_PREVENTED','This entry belongs to another SN.');if(old.conflict&&!old.recoveredBy)fail('UNIT_RECORD_CONFLICT','This session is stale. Reload the latest unit state.');return old.mutation?apply(old):view(old);}

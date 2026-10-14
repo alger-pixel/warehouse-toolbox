@@ -49,7 +49,9 @@
       message=busy?(state==='recovering'?'Recovering the previous save request safely.':'Updating the TINECO TO C UNIT CLASS record. Please wait.'):'The repair record was not confirmed as saved.';
       summary=[['SN',session.sn],['UNIT ID',session.unitId],...(saving?[['Outcome',session.pending.action==='pause'?'Pause':session.pending.body.outcome]]:[])];
     }else if(starting){
-      if(busy){state='loading';title='Checking machine history...';message='Looking for previous record, current step, labor, and parts.';}
+      if(busy&&session.recoveringActive){state='recovering';title='Existing Active Visit Found';message='Loading the existing visit…';}
+      else if(busy){state='loading';title='Checking machine history...';message='Looking for previous record, current step, labor, and parts.';}
+      else if(session.recoveringActive){state='error';title='Active Visit Found — Unable to Resume';message='Retry loading the existing visit or cancel this local action.';}
       else if(error.startsWith('DUPLICATE_SN_RECORDS:')){state='conflict';title='Duplicate SN Conflict';message='Multiple records were found for this SN. Manual review is required.';}
       else{state='error';title='Unable to Load Unit';message='Retry the lookup or cancel the current unit.';}
     }else if(session?.phase==='completed'){
@@ -107,10 +109,15 @@
   async function run(action,body,recovering=false){
     if(busy||session?.conflict&&!(action==='begin'&&body===session.conflict.recoveryBody))return;saveState=['finish','pause','client-return'].includes(action)?(recovering?'recovering':session.pending?.action===action?'retrying':'saving'):'';busy=true;error='';const gen=generation;
     delete session.startRejected;session.pending={action,body,submittedAt:session.pending?.submittedAt||Date.now()};persist();draw();
-    try{const response=await window.MkiteApiClient.post(`/api/tineco-toc/${action}`,body);if(!ctx||generation!==gen)return;
+    try{let effectiveAction=action,effectiveBody=body,response=await window.MkiteApiClient.post(`/api/tineco-toc/${action}`,body);if(!ctx||generation!==gen)return;
+      if(!response.ok&&action==='begin'&&response.error?.code==='UNIT_ALREADY_ACTIVE'){
+        session.recoveringActive=true;session.pending={action:'resume',body:{sn:body.sn},submittedAt:Date.now()};persist();draw();
+        effectiveAction='resume';effectiveBody=session.pending.body;response=await window.MkiteApiClient.post('/api/tineco-toc/resume',effectiveBody);if(!ctx||generation!==gen)return;
+      }
       if(!response.ok){const e=new Error(`${response.error.code}: ${response.error.message}`);e.code=response.error.code;throw e;}
       const visit=response.data;
-      if(!visit || visit.requestId!==body.requestId || !['draft','saved','paused','cancelled','completed','disposal'].includes(visit.phase) || (visit.phase==='draft' && (!visit.unitId || !visit.sn || !Number.isFinite(visit.startedAt) || !Number.isInteger(visit.entry) || ![0,1,2].includes(visit.step) || !visit.data))){const e=new Error('INVALID_VISIT_RESPONSE: Unable to confirm the repair visit. Retry the same request.');e.code='INVALID_VISIT_RESPONSE';throw e;}
+      const identityConfirmed=effectiveAction==='resume'?/^[a-zA-Z0-9-]{16,80}$/.test(visit?.requestId||'')&&String(visit?.sn||'').trim().toUpperCase()===String(effectiveBody.sn||'').trim().toUpperCase():visit?.requestId===effectiveBody.requestId;
+      if(!visit || !identityConfirmed || !['draft','saved','paused','cancelled','completed','disposal'].includes(visit.phase) || (visit.phase==='draft' && (!visit.unitId || !visit.sn || !Number.isFinite(visit.startedAt) || !Number.isInteger(visit.entry) || ![0,1,2].includes(visit.step) || !visit.data))){const e=new Error('INVALID_VISIT_RESPONSE: Unable to confirm the repair visit. Retry the same request.');e.code='INVALID_VISIT_RESPONSE';throw e;}
       if(body.recoverFrom&&(!visit.unitId||visit.unitId!==session.unitId||String(visit.sn||'').trim().toUpperCase()!==session.sn.trim().toUpperCase()||session.recordId&&visit.recordId!==session.recordId)){const e=new Error('INVALID_VISIT_RESPONSE: Reload did not confirm the same unit.');e.code='INVALID_VISIT_RESPONSE';throw e;}
       if(visit.phase==='cancelled'){session=null;ctx.storage.remove(KEY);}else{
         const {pending,pendingOperation,...activeVisit}=visit;
@@ -118,7 +125,7 @@
       }
       saveState='';
       if(['saved','paused'].includes(session?.phase))ctx.audio?.success?.();
-    }catch(e){if(ctx&&generation===gen){if(['finish','pause','client-return'].includes(action))saveState='failed';error=e.message;ctx.toast.show(error);if(action==='begin'&&['SN_REQUIRED','SN_INVALID','DUPLICATE_SN_RECORDS','TINECO_TOC_RECORD_INVALID','TINECO_TOC_SCHEMA_INVALID','TINECO_TOC_TABLE_NOT_CONFIGURED','UNIT_ALREADY_ACTIVE'].includes(e.code)){session.startRejected=true;persist();}
+    }catch(e){if(ctx&&generation===gen){if(['finish','pause','client-return'].includes(action))saveState='failed';error=e.message;ctx.toast.show(error);if(session.recoveringActive)session.startRejected=true;if(action==='begin'&&['SN_REQUIRED','SN_INVALID','DUPLICATE_SN_RECORDS','TINECO_TOC_RECORD_INVALID','TINECO_TOC_SCHEMA_INVALID','TINECO_TOC_TABLE_NOT_CONFIGURED'].includes(e.code)){session.startRejected=true;}if(session.startRejected)persist();
       if(e.code==='UNIT_RECORD_CONFLICT'){session.conflict ||= {code:e.code,requestId:body.requestId,detectedAt:Date.now()};saveState='';persist();}
       // Validation errors are known to precede writes. Unknown save outcomes stay locked.
       if(['PAUSE_NOTE_REQUIRED','CLIENT_RETURN_CONFIRMED_BY_REQUIRED','CLIENT_RETURN_REQUIRES_COMPLETED','ISSUE_FOUND_REQUIRED','INVALID_FORM','PAYLOAD_TOO_LARGE','SN_REQUIRED','SN_INVALID','INVALID_PART_QUANTITY','PART_DETAIL_REQUIRED','REPAIR_LEVEL_REQUIRED','FINAL_QC_FAILURE_REASON_REQUIRED','DISPOSAL_NOTE_REQUIRED','REPAIR_RESULT_OPTION_NOT_AVAILABLE','FINAL_QC_RESULT_OPTION_NOT_AVAILABLE','REPAIR_LEVEL_OPTION_NOT_AVAILABLE','TINECO_TOC_SCHEMA_INVALID','TINECO_TOC_TABLE_NOT_CONFIGURED'].includes(e.code)){if(action!=='begin'){delete session.pending;persist();}}
@@ -134,7 +141,7 @@
   function begin(sn){if(busy||session)return;sn=String(sn||'').trim();if(!sn){error='SN_REQUIRED: Scan or enter the serial number.';draw();return;}resetInventory();session={requestId:window.crypto.randomUUID(),sn,data:{totalPartsUsed:'0'},phase:'starting',step:0};run('begin',{requestId:session.requestId,sn});}
   function move(to){if(!session||session.pending||busy||Math.abs(to-session.step)!==1||to<0||to>2)return;run('step',{requestId:session.requestId,from:session.step,to,data:visitData()});}
   function finish(outcome){if(!session||session.pending||busy)return;run('finish',{requestId:session.requestId,outcome,data:visitData()});}
-  function init(context){ctx=context;generation++;resetInventory();busy=false;error='';saveState='';session=ctx.storage.get(KEY,null);if(session?.phase==='cancelled')session=null;draw();timer=window.setInterval(()=>{const el=ctx?.root.querySelector('#tcu-timer');if(el)el.textContent=minutes();const total=ctx?.root.querySelector('#tcu-total-labor');if(total)total.textContent=(session?.previousLaborMinutes||0)+minutes();},1000);if(session?.conflict)return;if(session?.pending?.action==='begin')run('begin',session.pending.body);else if(['finish','pause','client-return'].includes(session?.pending?.action))run(session.pending.action,session.pending.body,true);}
+  function init(context){ctx=context;generation++;resetInventory();busy=false;error='';saveState='';session=ctx.storage.get(KEY,null);if(session?.phase==='cancelled')session=null;draw();timer=window.setInterval(()=>{const el=ctx?.root.querySelector('#tcu-timer');if(el)el.textContent=minutes();const total=ctx?.root.querySelector('#tcu-total-labor');if(total)total.textContent=(session?.previousLaborMinutes||0)+minutes();},1000);if(session?.conflict)return;if(['begin','resume'].includes(session?.pending?.action))run(session.pending.action,session.pending.body);else if(['finish','pause','client-return'].includes(session?.pending?.action))run(session.pending.action,session.pending.body,true);}
   window.MkiteClientToolModules=window.MkiteClientToolModules||{};
   window.MkiteClientToolModules['tineco.toc']={render,init,cleanup(){generation++;inventoryCache?.dispose();inventoryCache=null;window.clearInterval(timer);ctx=null;busy=false;},_test:{inventoryHtml,reloadLatest,begin,move,finish,run,minutes,addPart,removePart,getSession:()=>session,KEY}};
 }(window));
