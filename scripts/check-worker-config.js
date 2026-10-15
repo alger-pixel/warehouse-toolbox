@@ -2,6 +2,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const EXPECTED_NAME='mkite-secure-api';
 const REQUIRED_OPERATIONAL_TABLES=['FEISHU_CASE_CATEGORY_TABLE_ID','FEISHU_USER_TABLE_ID'];
+const REQUIRED_RUNTIME_VARS={FEISHU_DATA_ENVIRONMENT:'production',WORKER_RUNTIME_ENVIRONMENT:'production'};
 
 function configuredVar(source,key){
   const match=source.match(new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']*)["']`,`m`));
@@ -16,6 +17,7 @@ function checkWorkerConfig(file=path.join(__dirname,'..','worker','wrangler.toml
     const value=configuredVar(source,key);
     if(!value||!/^tbl[A-Za-z0-9]+$/.test(value))throw new Error(`Worker deployment blocked: ${key} must contain the existing Feishu table ID in worker/wrangler.toml.`);
   }
+  for(const [key,expected] of Object.entries(REQUIRED_RUNTIME_VARS))if(configuredVar(source,key)!==expected)throw new Error(`Worker deployment blocked: ${key} must be "${expected}" in worker/wrangler.toml.`);
   return match[1];
 }
 
@@ -24,4 +26,4 @@ if(require.main===module){
   catch(error){console.error(error.message);process.exitCode=1;}
 }
 
-module.exports={EXPECTED_NAME,REQUIRED_OPERATIONAL_TABLES,checkWorkerConfig};
+module.exports={EXPECTED_NAME,REQUIRED_OPERATIONAL_TABLES,REQUIRED_RUNTIME_VARS,checkWorkerConfig};

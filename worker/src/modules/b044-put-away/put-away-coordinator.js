@@ -17,7 +17,10 @@ export class B044PutAwayCoordinator {
   async handle(request) {
     const recovery = new URL(request.url).pathname === '/admin-recover';
     if (recovery && !await managementAuthorized(request, this.env)) return Response.json({ ok: false, error: { code: 'ADMIN_KEY_REQUIRED', message: 'Administration authorization required.' } }, { status: 401 });
-    const reconcile = new URL(request.url).pathname.endsWith('/reconcile');
+    const pathname = new URL(request.url).pathname;
+    const diagnoseReconciliation = pathname.endsWith('/reconcile/diagnose');
+    const executeReconciliation = pathname.endsWith('/reconcile/execute');
+    const reconcile = pathname.endsWith('/reconcile');
     const recover = new URL(request.url).pathname.endsWith('/recover');
     const start = new URL(request.url).pathname.endsWith('/start-process');
     const complete = new URL(request.url).pathname.endsWith('complete-package');
@@ -25,7 +28,7 @@ export class B044PutAwayCoordinator {
     // Correlation IDs are server-generated UUIDs, never arbitrary input in logs.
     const forwardedId = request.headers.get('X-Request-ID');
     const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(forwardedId || '') ? forwardedId : crypto.randomUUID();
-    const diagnostic = { route: recovery ? 'b044-admin-recover' : recover ? 'b044-recover' : reconcile ? 'b044-reconcile' : start ? 'b044-start' : complete ? 'b044-complete' : cancel ? 'b044-cancel' : 'b044-create', requestId, stage: 'CONFIGURE', operationState: 'unknown' };
+    const diagnostic = { route: recovery ? 'b044-admin-recover' : recover ? 'b044-recover' : diagnoseReconciliation ? 'b044-reconcile-diagnose' : executeReconciliation ? 'b044-reconcile-execute' : reconcile ? 'b044-reconcile' : start ? 'b044-start' : complete ? 'b044-complete' : cancel ? 'b044-cancel' : 'b044-create', requestId, stage: 'CONFIGURE', operationState: 'unknown' };
     const onStage = (stage, metadata = {}) => {
       if (stage) diagnostic.stage = stage;
       for (const key of ['partsPayloadExists', 'plRecordFound', 'plUpdateAttempted']) if (typeof metadata[key] === 'boolean') diagnostic[key] = metadata[key];
@@ -38,7 +41,7 @@ export class B044PutAwayCoordinator {
       const service = createB044PutAwayService(config, records, pickingLists, this.ctx.storage, { onStage, partUsed: createPartUsedCoordinatorClient(this.env) });
       onStage('READ_REQUEST');
       const input = await request.json();
-      const data = await (recovery ? service.adminRecover(input) : recover ? service.recover(input) : reconcile ? service.reconcile(input) : start ? service.startProcess(input) : complete ? service.complete(input) : cancel ? service.cancel(input) : service.create(input));
+      const data = await (recovery ? service.adminRecover(input) : recover ? service.recover(input) : diagnoseReconciliation ? service.diagnoseReconciliation(input) : executeReconciliation ? service.reconcileStale(input) : reconcile ? service.reconcile(input) : start ? service.startProcess(input) : complete ? service.complete(input) : cancel ? service.cancel(input) : service.create(input));
       if (data.error) Object.assign(data.error, { stage: diagnostic.stage, operationState: diagnostic.operationState });
       console.log(JSON.stringify({ ...diagnostic, event: data.operational === false ? 'picking_list_not_operational' : 'picking_list_result', code: data.error?.code || 'OK', status: 200 }));
       return Response.json({ ok: true, data, requestId });
@@ -48,7 +51,7 @@ export class B044PutAwayCoordinator {
       const conflict = known && !lookupFailure;
       const code = known ? error.code : 'B044_OPERATION_FAILED', status = conflict ? 409 : 502;
       console.error(JSON.stringify({ ...diagnostic, ...(lookupFailure ? error.diagnostics : {}), event: lookupFailure ? 'picking_list_number_lookup_failed' : conflict ? 'picking_list_conflict' : 'picking_list_failure', code, status }));
-      return Response.json({ ok: false, requestId, error: { code, message: known ? error.message : 'Operation could not be confirmed. Retry the same request; do not start another Picking List.', retryable: !conflict, stage: diagnostic.stage, operationState: diagnostic.operationState } }, { status });
+      return Response.json({ ok: false, requestId, error: { code, message: known ? error.message : 'Operation could not be confirmed. Retry the same request; do not start another Picking List.', retryable: !conflict, stage: diagnostic.stage, operationState: diagnostic.operationState, ...(error.diagnosis ? { diagnosis: error.diagnosis } : {}) } }, { status });
     }
   }
 }

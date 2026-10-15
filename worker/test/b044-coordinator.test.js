@@ -5,7 +5,7 @@ import { handleRequest } from '../src/index.js';
 
 function fixture(t, { missingProcessing = false } = {}) {
   const memory = new Map(), events = [], logs = [];
-  const storage = { async get(key) { return structuredClone(memory.get(key)); }, async put(key, value) { memory.set(key, structuredClone(value)); } };
+  const storage = { async get(key) { return structuredClone(memory.get(key)); }, async put(key, value) { memory.set(key, structuredClone(value)); }, async delete(key) { memory.delete(key); } };
   const packages = Array.from({ length: 6 }, (_, i) => ({ record_id: `rec-${i}`, fields: { SKU: `TRACK-${String(i).padStart(3, '0')}`, STATUS: 'Active', LOCATION: 'A1', NOTE: '' } }));
   const masters = [];
   const env = { FEISHU_APP_ID: crypto.randomUUID(), FEISHU_APP_SECRET: 'PRIVATE-SECRET', FEISHU_BASE_APP_TOKEN: 'base', FEISHU_PACKAGE_TABLE_ID: 'packages', FEISHU_CLIENT_TABLE_ID: 'clients', FEISHU_PICKING_LIST_TABLE_ID: 'lists', ALLOWED_ORIGINS: 'http://localhost:5501' };
@@ -104,7 +104,7 @@ test('completed PL is returned on retry and cannot be recreated with a new opera
   const resumed = (await (await f.send()).json()).data;
   assert.ok(resumed.packages.every(r => r.completedAt)); assert.equal(f.masters.length, 1);
   const recreated = await f.send({ ...f.input, requestId: 'new-operation-123456' });
-  assert.equal(recreated.status, 409); assert.equal((await recreated.json()).error.code, 'PACKAGE_RESERVED');
+  assert.equal(recreated.status, 409); assert.equal((await recreated.json()).error.code, 'NO_ELIGIBLE_PACKAGES');
   assert.equal(f.events.filter(e => e === 'upload').length, 0);
 });
 

@@ -29,6 +29,10 @@ test('legacy text, segmented Feishu text, unknown formats and cancellation are s
  r.fields['PICKING LIST DETAIL']=[{text:r.fields['PICKING LIST DETAIL']+'\nSTATUS: CANCELLED\nCANCELLED: 2026/09/11 10:00'}];assert.equal(parsePickingList(r).status,'Cancelled');
  assert.equal(parsePickingList({fields:{'PICKING LIST DETAIL':'unrecognized'}}).status,'Completion unverified');
 });
+test('reconciled lifecycle reports truthful partial terminal status and counts',()=>{
+ const r=record(),segments=r.fields['PICKING LIST DETAIL'].split('\nCOMPLETION: ');r.fields['PICKING LIST DETAIL']=segments[0]+'\nCOMPLETION: '+segments[1]+'\nSTATUS: PARTIALLY COMPLETED / RECONCILED\nOriginal packages: 2\nCompleted packages preserved: 1\nReleased packages reconciled: 1';
+ const parsed=parsePickingList(r);assert.equal(parsed.status,'Partially completed / reconciled');assert.equal(parsed.total,2);assert.equal(parsed.processed,1);assert.equal(parsed.remaining,1);
+});
 test('ordinary browsing pages at 50 with full-set summary and no package payloads',async()=>{
  const f=fixture(Array.from({length:61},(_,i)=>record(i)));const a=await f.service.search();assert.equal(a.results.length,50);assert.equal(a.pagination.totalMatched,61);assert.equal(a.summary.processed,122);assert.equal(a.summary.partsQuantity,122);assert.equal(a.pagination.hasPrevious,false);assert.equal(a.pagination.hasNext,true);assert.equal(a.results[0].packages,undefined);
  const b=await f.service.search({page:2});assert.equal(b.results.length,11);assert.equal(b.pagination.hasPrevious,true);assert.equal(b.pagination.hasNext,false);assert.equal(b.pagination.totalPages,2);

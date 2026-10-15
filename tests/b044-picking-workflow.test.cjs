@@ -65,8 +65,8 @@ test('frontend routes all PL requests through secure API and exports exception r
   const XLSX = require('../vendor/xlsx.full.min.js');
   const window = { XLSX: { ...XLSX, writeFile: book => { workbook = book; } }, MkiteApiConfig: { mode: 'live' }, MkiteApiClient: { post: async (path, body) => { calls.push({ path, body }); return { ok: true, data: body }; } } };
   vm.runInNewContext(fs.readFileSync('vendor/JsBarcode.code128.min.js','utf8'),{window});vm.runInNewContext(fs.readFileSync('js/client-tools/b044/picking-workflow.js', 'utf8'), { window, document: {} });
-  for (const action of ['prepare', 'recover', 'create', 'startProcess', 'complete', 'cancel']) await window.MkiteB044Picking[action]({ test: true });
-  assert.deepEqual(calls.map(c => c.path), ['/api/b044/put-away/prepare', '/api/b044/put-away/recover', '/api/b044/put-away/create-picking-list', '/api/b044/put-away/start-process', '/api/b044/put-away/complete-package', '/api/b044/put-away/cancel-picking-list']);
+  for (const action of ['prepare', 'recover', 'diagnoseReconciliation', 'reconcileStale', 'create', 'startProcess', 'complete', 'cancel']) await window.MkiteB044Picking[action]({ test: true });
+  assert.deepEqual(calls.map(c => c.path), ['/api/b044/put-away/prepare', '/api/b044/put-away/recover', '/api/b044/put-away/reconcile/diagnose', '/api/b044/put-away/reconcile/execute', '/api/b044/put-away/create-picking-list', '/api/b044/put-away/start-process', '/api/b044/put-away/complete-package', '/api/b044/put-away/cancel-picking-list']);
   window.MkiteB044Picking.exportExceptions([{ trackingNumber: '001', reason: 'NOT FOUND IN MKITE PACKAGE CLASS' }, { trackingNumber: '002', reason: 'STATUS Processing' }, { trackingNumber: '003', reason: 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS' }]);
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets.Exceptions);
   assert.equal(rows[2].REASON, 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS');
@@ -91,6 +91,20 @@ test('creation retry retains the original operation and source rows after 409 an
   assert.equal(requests.length, 2); assert.deepEqual(requests[1], requests[0]);
   assert.equal(requests[1].requestId, 'operation-123456789');
 });
+test('stale ownership UI explains diagnosis and requires exact typed confirmation', async () => {
+  const h = setup(), state = h.tool.getState(); state.pl = null;
+  state.staleOwnership = { pickingListNumber:'B044-PL-20261014-0007',pickingListRecordId:'master-7',fingerprint:'b044-test',reconciliationAllowed:true,summary:{total:9,safeCompleted:1,safeAssigned:0,staleReleased:8,conflicts:0,unsafe:0},blockingReasons:[],packages:[{trackingNumber:'TRACK1',packageStatus:'Processed',latestPickingListNumber:'B044-PL-20261014-0007',latestB044Action:'DONE PUTTING AWAY',classification:'SAFE_COMPLETED',reason:'Completion preserved.'},{trackingNumber:'TRACK2',packageStatus:'Active',latestPickingListNumber:'B044-PL-20261014-0001',latestB044Action:'CANCELLED',classification:'STALE_RELEASED',reason:'Later release with stale reservation.'}] };
+  const markup = h.tool.workflowPanel(); assert.match(markup,/STALE PICKING LIST OWNERSHIP DETECTED/); assert.match(markup,/Released \/ stale[\s\S]*8/); assert.match(markup,/Normal resume is blocked/);
+  let calls=0; h.window.prompt=()=> 'WRONG'; h.window.MkiteB044Picking.reconcileStale=async()=>{calls++;}; await h.tool.reconcileStaleOwnership(); assert.equal(calls,0);
+  h.window.prompt=()=>state.staleOwnership.pickingListNumber; h.window.MkiteB044Picking.reconcileStale=async input=>{calls++;assert.equal(input.fingerprint,'b044-test');return {pickingListNumber:input.pickingListNumber,pickingListRecordId:'master-7',requestId:'request-7',phase:'reconciled',operational:false,packages:[],exceptions:[],succeeded:[],failed:[]};};
+  await h.tool.reconcileStaleOwnership(); assert.equal(calls,1); assert.equal(state.staleOwnership,null); assert.match(state.workflowError,/history was preserved/);
+});
+test('normal recovery conflict opens controlled stale diagnosis instead of offering resume', async () => {
+  const h=setup(),state=h.tool.getState();state.pl=null;state.creationRequestId=null;state.prepared={packages:state.packages,eligible:state.packages,exceptions:[]};h.window.confirm=()=>true;h.window.crypto={randomUUID:()=> 'new-browser-request-stale'};
+  const diagnosis={pickingListNumber:'B044-PL-20261014-0007',pickingListRecordId:'master-7',requestId:'old-request',phase:'operational',fingerprint:'b044-stale',reconciliationAllowed:true,summary:{total:9,safeCompleted:1,safeAssigned:0,staleReleased:8,conflicts:0,unsafe:0},blockingReasons:[],packages:[]};
+  h.window.MkiteB044Picking.create=async()=>{throw Object.assign(Error('reserved'),{code:'PACKAGE_RESERVED'});};h.window.MkiteB044Picking.recover=async()=>{throw Object.assign(Error('unsafe to resume'),{code:'PACKAGE_STATE_CONFLICT',diagnosis});};
+  await h.tool.createPickingList();assert.equal(state.recoveryCandidate,null);assert.equal(state.staleOwnership.pickingListNumber,diagnosis.pickingListNumber);assert.match(h.root.innerHTML,/STALE PICKING LIST OWNERSHIP DETECTED/);assert.doesNotMatch(h.root.innerHTML,/RESUME PICKING LIST/);
+});
 test('fresh browser discovers and resumes the authoritative Picking List after PACKAGE_RESERVED without creating again', async () => {
   const h = setup(); const state = h.tool.getState(); state.pl = null; state.creationRequestId = null;
   state.prepared = { packages: state.packages, eligible: state.packages, exceptions: [] };
@@ -109,7 +123,7 @@ test('fresh browser discovers and resumes the authoritative Picking List after P
 });
 test('upload-only unreserved packages require confirmation and remain excluded from recovered PL',async()=>{
   const h=setup(),state=h.tool.getState(),authoritative=[state.packages[0]];state.pl=null;
-  state.recoveryCandidate={operational:true,phase:'operational',requestId:'original-operation-2',pickingListNumber:'B044-PL-20261014-0011',pickingListRecordId:'master-2',packages:authoritative,exceptions:[],succeeded:['rec1'],failed:[],recoveryComparison:{uploadedCount:3,authoritativeCount:1,intersectionCount:1,uploadOnlyCount:2,existingPlOnlyCount:0,uploadOnly:[{packageRecordId:'extra-1'},{packageRecordId:'extra-2'}],existingPlOnly:[]}};
+  state.recoveryCandidate={operational:true,phase:'operational',requestId:'original-operation-2',pickingListNumber:'B044-PL-TEST-0042',pickingListRecordId:'master-2',packages:authoritative,exceptions:[],succeeded:['rec1'],failed:[],recoveryComparison:{uploadedCount:3,authoritativeCount:1,intersectionCount:1,uploadOnlyCount:2,existingPlOnlyCount:0,uploadOnly:[{packageRecordId:'extra-1'},{packageRecordId:'extra-2'}],existingPlOnly:[]}};
   let confirms=0,reconciles=0;h.window.confirm=()=>{confirms+=1;return confirms>1};h.window.MkiteB044Picking.reconcile=async()=>{reconciles+=1;return{executionAllowed:true,packages:[{packageRecordId:'rec1',packageStatus:'Processing',ownershipValid:true,completedAt:null,reconciliationRequired:false}]}};
   h.tool.workflowPanel();assert.match(h.tool.workflowPanel(),/Uploaded but excluded[\s\S]*2 packages/);assert.match(h.tool.workflowPanel(),/will NOT be added/);
   await h.tool.resumeExistingPickingList();assert.equal(state.pl,null);assert.equal(reconciles,0);

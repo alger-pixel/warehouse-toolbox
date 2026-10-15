@@ -32,10 +32,11 @@ export function parsePickingList(record) {
     else warnings.push('Usage without a matching confirmed completion was excluded.');
   }
   const cancelled = detail.split('\n').includes('STATUS: CANCELLED');
+  const reconciled = detail.split('\n').includes('STATUS: PARTIALLY COMPLETED / RECONCILED');
   const total = Number(field(head, 'PACKAGE COUNT')) || packages.length;
   const processed = packages.filter(p => p.completedAt).length;
   // Old text snapshots do not record completion: never infer current package status from creation.
-  const status = cancelled ? 'Cancelled' : total && processed === total ? 'Completed' : processed ? 'Partially completed' : 'Completion unverified';
+  const status = cancelled ? 'Cancelled' : reconciled ? 'Partially completed / reconciled' : total && processed === total ? 'Completed' : processed ? 'Partially completed' : 'Completion unverified';
   const partSummary = parts.aggregate(packages.map(p => p.actualParts));
   const knownB044 = field(head, 'TOOL') === 'B044 SCAN PUT AWAY';
   return { recordId: record.record_id, pickingListNumber: text(f['PICKING LIST NUMBER']), createdAt: field(head, 'CREATED'), createdDate: field(head, 'CREATED').slice(0,10).replaceAll('/', '-'), warehouse: field(head, 'WAREHOUSE') || (knownB044 ? 'MKS66' : ''), clientId: field(head, 'CLIENT ID'), total, processed, remaining: total - processed, commandCount: packages.filter(p => p.commandRaw.trim()).length, hasParts: partSummary.length > 0, status, processTime: text(f['PROCESS TIME']), cancelledAt: field(detail, 'CANCELLED'), packages, partSummary, warnings: [...new Set(warnings)], completionNote: 'Counts reflect confirmed completion entries. Older lists may not contain completion history; remaining means not confirmed complete.' };

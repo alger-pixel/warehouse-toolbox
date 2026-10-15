@@ -7,7 +7,7 @@
   const SUPPORTED_ORDER_PREFIXES = ["RMA", "RV"].sort((a, b) => b.length - a.length);
   const STATUS = { NOT_PRINTED: "NOT PRINTED", PRINTED: "PRINTED", REPRINTED: "REPRINTED" };
   const emptyProgress = () => ({ active: false, operation: '', stage: '', completed: 0, total: 0, percent: 0, message: '', indeterminate: false, error: '' });
-  const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, recoveryCandidate: null, commandCache: [], pendingPackageId: null, pendingConfirmationTracking: null, creationRequestId: null, progress: emptyProgress() });
+  const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, recoveryCandidate: null, staleOwnership: null, commandCache: [], pendingPackageId: null, pendingConfirmationTracking: null, creationRequestId: null, progress: emptyProgress() });
   let adminRecoveryKey = '';
   let context = null;
   let state = emptySession();
@@ -253,7 +253,8 @@
     const totals = counts();
     const ready = usablePickingList();
     const completed = currentQueue().filter(item => item.completedAt || item.packageStatus === "Processed").length;
-    const executionStatus = state.pl?.phase === "cancelled" ? "Reset Page to prepare a new Picking List."
+    const executionStatus = state.pl?.phase === "reconciled" ? "This historical Picking List is reconciled and terminal. Start a new Picking List for released packages."
+      : state.pl?.phase === "cancelled" ? "Reset Page to prepare a new Picking List."
       : state.pl?.phase === "cancelling" ? "Cancellation is in progress. Scan & Print remains locked."
       : ["blocked", "reconciling"].includes(state.pl?.phase) && state.workflowError ? state.workflowError
       : "Scan mode unlocks once your picking list is created and all eligible packages are assigned.";
@@ -267,7 +268,7 @@
       </section>
       <section class="pas-workflow-step pas-execution${ready ? " is-ready" : ""}" aria-labelledby="pas-execution-title">
         <header class="pas-step-header"><span class="pas-step-number" aria-hidden="true">02</span><div><h2 id="pas-execution-title">STEP 2 · SCAN &amp; PRINT EXECUTION</h2><p>Scan the package tracking number to print its label. For commanded packages, scan actual parts first. Confirm completion by scanning the same In-House SKU / Tracking again.</p></div></header>
-        <div class="pas-step-content"><div class="pas-execution-status" role="status"><strong>${ready ? "Ready for Scan &amp; Print" : (state.pl?.phase === "cancelled" ? "PICKING LIST CANCELLED · LOCKED" : "Complete Picking List Preparation first")}</strong><span>${ready ? `Picking list ${esc(state.pl.pickingListNumber)} · ${completed} / ${state.pl.packages.length} packages completed` : esc(executionStatus)}</span></div>
+        <div class="pas-step-content"><div class="pas-execution-status" role="status"><strong>${ready ? "Ready for Scan &amp; Print" : (state.pl?.phase === "reconciled" ? "PICKING LIST RECONCILED · LOCKED" : state.pl?.phase === "cancelled" ? "PICKING LIST CANCELLED · LOCKED" : "Complete Picking List Preparation first")}</strong><span>${ready ? `Picking list ${esc(state.pl.pickingListNumber)} · ${completed} / ${state.pl.packages.length} packages completed` : esc(executionStatus)}</span></div>
         ${state.file ? `<div class="pas-overview pas-execution-stats">${stat("PL labels printed", totals.printed, "success")}${stat("Found packages remaining", totals.remaining)}${stat("Found packages", currentQueue().length)}${stat("PL packages completed", completed, "success")}</div>
         <div class="pas-actions pas-execution-actions"><div class="pas-action-feature"><button class="button button-primary pas-scan-start" id="pas-start-scan" type="button"${ready && !operationBusy ? "" : " disabled"}>Start Scan &amp; Print Mode</button><small>Continuous scan-to-print on kiosk-configured warehouse stations.</small></div><div class="pas-manual-actions"><div class="pas-action-feature"><button class="button button-secondary" id="pas-print-all" type="button"${currentQueue().length && !state.pendingPackageId ? "" : " disabled"}>PRINT FOUND PACKAGES</button><small>Print labels only for packages assigned to this Picking List.</small></div><button class="button button-secondary" id="pas-preview" type="button"${currentQueue().length ? "" : " disabled"}>PREVIEW FOUND PACKAGES</button></div></div>
         <div class="pas-operational-area"><div class="pas-area-heading"><h3>Package labels &amp; execution reference</h3><p>Only found, eligible packages assigned to the current Picking List are shown here.</p></div>${packageTable()}</div>` : '<div class="pas-empty"><strong>Your execution workspace</strong><span>Upload package data in Step 1 to see label controls and generated packages here.</span></div>'}</div>
@@ -289,6 +290,7 @@
 
   function bindSetup() {
     document.getElementById("pas-resume-existing-pl")?.addEventListener("click", resumeExistingPickingList);
+    document.getElementById("pas-reconcile-stale")?.addEventListener("click", reconcileStaleOwnership);
     document.getElementById("pas-retry-commands")?.addEventListener("click", retryCommands);
     document.getElementById("pas-prepare")?.addEventListener("click", prepareInventory);
     document.getElementById("pas-create-pl")?.addEventListener("click", createPickingList);
@@ -380,7 +382,7 @@
   }
   function isTerminalPickingList() {
     const pl = state.pl;
-    return Boolean(pl?.pickingListRecordId && (pl.phase === 'cancelled' ||
+    return Boolean(pl?.pickingListRecordId && (['cancelled','reconciled'].includes(pl.phase) ||
       (pl.operational && pl.phase !== 'cancelling' && pl.packages?.length &&
        !state.pendingPackageId && pl.packages.every(row => Boolean(row.completedAt) && !row.reconciliationRequired))));
   }
@@ -414,6 +416,20 @@
     state.workflowError = '';
     operationBusy = false; clearProgress(); save(); renderSetup();
     await reconcilePickingList();
+  }
+  async function reconcileStaleOwnership() {
+    const diagnosis = state.staleOwnership;
+    if (operationBusy || !diagnosis?.reconciliationAllowed) return;
+    const typed = window.prompt(`RECONCILE STALE PICKING LIST\n\n${diagnosis.pickingListNumber}\n\nThis preserves ${diagnosis.summary.safeCompleted} completed package(s), releases stale Durable Object ownership for ${diagnosis.summary.staleReleased} already-released package(s), and closes the obsolete job.\n\nType the full Picking List number to confirm:`);
+    if (typed !== diagnosis.pickingListNumber) return;
+    operationBusy = true; const run = lifecycle; renderSetup();
+    try {
+      const result = await window.MkiteB044Picking.reconcileStale({ pickingListNumber: diagnosis.pickingListNumber, pickingListRecordId: diagnosis.pickingListRecordId, fingerprint: diagnosis.fingerprint, confirmPickingListNumber: typed });
+      if (!context || run !== lifecycle) return;
+      state.staleOwnership = null; state.recoveryCandidate = null; state.pl = result; state.creationRequestId = result.requestId || null; state.generationUncertain = false;
+      state.workflowError = `Picking List ${result.pickingListNumber} ownership reconciled. Completed package history was preserved.`; save();
+    } catch (error) { if (context && run === lifecycle) { state.workflowError = error.message; if (error.code === 'RECONCILIATION_STATE_CHANGED') state.staleOwnership = null; save(); } }
+    finally { if (context && run === lifecycle) { operationBusy = false; renderSetup(); } }
   }
   function clearLocalSession() {
     lifecycle += 1; startLocationLookup(); adminRecoveryKey = ''; state = emptySession(); scanState = { type: 'ready', scan: '', candidateIds: [] };
@@ -719,13 +735,18 @@
     if (candidates.length > 1) { context.audio.warning(); scanState = { type: "multiple", scan: entered, candidateIds: candidates.map(item => item.id) }; renderScanMode(); return; }
     context.audio.failure(); scanState = { type: "not-found", scan: entered, candidateIds: [] }; renderScanMode();
   }
+  function staleOwnershipMarkup() {
+    const stale = state.staleOwnership; if (!stale) return '';
+    const details = stale.packages?.map(row => `<details><summary>${esc(row.trackingNumber)} · ${esc(row.classification)}</summary><p>Status: ${esc(row.packageStatus)} · Latest action: ${esc(row.latestPickingListNumber)} ${esc(row.latestB044Action)}</p><p>${esc(row.reason)}</p></details>`).join('') || '';
+    return `<section class="pas-recovery-candidate pas-stale-ownership"><h4>STALE PICKING LIST OWNERSHIP DETECTED</h4><p><strong>${esc(stale.pickingListNumber)}</strong></p><p>This Picking List contains package ownership that no longer matches current Package Class state. Normal resume is blocked.</p><dl><div><dt>Original packages</dt><dd>${stale.summary.total}</dd></div><div><dt>Completed</dt><dd>${stale.summary.safeCompleted}</dd></div><div><dt>Still assigned</dt><dd>${stale.summary.safeAssigned}</dd></div><div><dt>Released / stale</dt><dd>${stale.summary.staleReleased}</dd></div><div><dt>Conflicts</dt><dd>${stale.summary.conflicts}</dd></div><div><dt>Unsafe</dt><dd>${stale.summary.unsafe}</dd></div></dl>${details}${stale.blockingReasons?.map(reason => `<p class="pas-recovery-warning">${esc(reason)}</p>`).join('') || ''}<button class="button button-primary" id="pas-reconcile-stale" ${stale.reconciliationAllowed && !operationBusy ? '' : 'disabled'}>RECONCILE STALE OWNERSHIP</button></section>`;
+  }
   function workflowPanel() {
     const prepared = state.prepared, pl = state.pl;
     const created = Boolean(pl?.pickingListRecordId), cancelled = pl?.phase === 'cancelled';
-    const lifecycleStatus = !cancelled && isTerminalPickingList() ? 'PICKING LIST COMPLETED' : cancelled ? 'PICKING LIST CANCELLED' : pl?.operational ? 'PICKING LIST CREATED' : prepared?.eligible.length && !state.creationRequestId ? 'READY TO GENERATE' : 'PREPARING';
+    const lifecycleStatus = pl?.phase === 'reconciled' ? 'PARTIALLY COMPLETED / RECONCILED' : !cancelled && isTerminalPickingList() ? 'PICKING LIST COMPLETED' : cancelled ? 'PICKING LIST CANCELLED' : pl?.operational ? 'PICKING LIST CREATED' : prepared?.eligible.length && !state.creationRequestId ? 'READY TO GENERATE' : 'PREPARING';
     const majorProgress = ['GENERATING PICKING LIST','CANCELLING PICKING LIST'].includes(state.progress?.operation);
     const comparison = state.recoveryCandidate?.recoveryComparison;
-    return `<section class="pas-picking-panel panel" aria-live="polite"><h3>${lifecycleStatus}</h3>${progressMarkup()}${state.recoveryCandidate ? `<section class="pas-recovery-candidate"><h4>Existing Picking List Found</h4><p><strong>${esc(state.recoveryCandidate.pickingListNumber)}</strong></p><p>This upload matches an existing Picking List.</p>${comparison ? `<dl><div><dt>Authoritative PL</dt><dd>${comparison.authoritativeCount} packages</dd></div><div><dt>Matched from upload</dt><dd>${comparison.intersectionCount} packages</dd></div><div><dt>Already in PL only</dt><dd>${comparison.existingPlOnlyCount} packages</dd></div><div><dt>Uploaded but excluded</dt><dd>${comparison.uploadOnlyCount} packages</dd></div></dl><p>The existing Picking List will be restored with all ${comparison.authoritativeCount} packages.</p>${comparison.uploadOnlyCount ? `<p class="pas-recovery-warning">The ${comparison.uploadOnlyCount} additional uploaded package${comparison.uploadOnlyCount === 1 ? '' : 's'} will NOT be added to this Picking List. Confirmation is required.</p>` : ''}` : '<p>The complete authoritative Picking List will be restored.</p>'}<button class="button button-primary" id="pas-resume-existing-pl">RESUME PICKING LIST</button></section>` : ''}${pl?.packages?.some(r => r.reconciliationRequired) ? '<p role="status">SAVE PENDING / RECONCILIATION REQUIRED — Processed packages are counted below. Scan the affected tracking number to recover the pending save.</p>' : ''}${pl?.packages?.filter(r => r.reconciliationRequired && r.commandRaw).map(r => `<p>${esc(r.trackingNumber)} · PACKAGE STATUS: ${esc(r.packageStatus)} · PART USED SAVE PENDING</p>`).join('') || ''}${commandSummary()}${possiblePartsMarkup(pl?.packages || prepared?.eligible || [])}<p>${operationBusy && !state.progress?.active && !majorProgress ? 'Working — keep this session open…' : state.progress?.active ? '' : esc(state.workflowError || (!cancelled && pl?.message) || (pl?.operational ? 'Picking List ready for warehouse scanning.' : cancelled ? `${pl.processingReturnedToActive || 0} unfinished packages returned to Active. ${pl.processedRetained || 0} completed packages remain Processed. ${pl.skipped || 0} packages skipped due to unexpected status. Reset the page to prepare a new Picking List.` : 'Upload and matching are read-only. Generate explicitly to assign eligible packages.'))}</p>
+    return `<section class="pas-picking-panel panel" aria-live="polite"><h3>${lifecycleStatus}</h3>${progressMarkup()}${staleOwnershipMarkup()}${state.recoveryCandidate ? `<section class="pas-recovery-candidate"><h4>Existing Picking List Found</h4><p><strong>${esc(state.recoveryCandidate.pickingListNumber)}</strong></p><p>This upload matches an existing Picking List.</p>${comparison ? `<dl><div><dt>Authoritative PL</dt><dd>${comparison.authoritativeCount} packages</dd></div><div><dt>Matched from upload</dt><dd>${comparison.intersectionCount} packages</dd></div><div><dt>Already in PL only</dt><dd>${comparison.existingPlOnlyCount} packages</dd></div><div><dt>Uploaded but excluded</dt><dd>${comparison.uploadOnlyCount} packages</dd></div></dl><p>The existing Picking List will be restored with all ${comparison.authoritativeCount} packages.</p>${comparison.uploadOnlyCount ? `<p class="pas-recovery-warning">The ${comparison.uploadOnlyCount} additional uploaded package${comparison.uploadOnlyCount === 1 ? '' : 's'} will NOT be added to this Picking List. Confirmation is required.</p>` : ''}` : '<p>The complete authoritative Picking List will be restored.</p>'}<button class="button button-primary" id="pas-resume-existing-pl">RESUME PICKING LIST</button></section>` : ''}${pl?.packages?.some(r => r.reconciliationRequired) ? '<p role="status">SAVE PENDING / RECONCILIATION REQUIRED — Processed packages are counted below. Scan the affected tracking number to recover the pending save.</p>' : ''}${pl?.packages?.filter(r => r.reconciliationRequired && r.commandRaw).map(r => `<p>${esc(r.trackingNumber)} · PACKAGE STATUS: ${esc(r.packageStatus)} · PART USED SAVE PENDING</p>`).join('') || ''}${commandSummary()}${possiblePartsMarkup(pl?.packages || prepared?.eligible || [])}<p>${operationBusy && !state.progress?.active && !majorProgress ? 'Working — keep this session open…' : state.progress?.active ? '' : esc(state.workflowError || (!cancelled && pl?.message) || (pl?.operational ? 'Picking List ready for warehouse scanning.' : cancelled ? `${pl.processingReturnedToActive || 0} unfinished packages returned to Active. ${pl.processedRetained || 0} completed packages remain Processed. ${pl.skipped || 0} packages skipped due to unexpected status. Reset the page to prepare a new Picking List.` : 'Upload and matching are read-only. Generate explicitly to assign eligible packages.'))}</p>
       ${pl ? `<p><strong>${esc(pl.pickingListNumber)}</strong> · ${pl.succeeded.length} / ${pl.packages.length} ASSIGNED${pl.createdAt ? ` · Created ${esc(pl.createdAt)}` : ''}</p>${pl.failed.map(r => `<p class="pas-confirm-error">${esc(r.trackingNumber)}: ${esc(r.reason)}</p>`).join('')}` : ''}
       <div class="pas-actions">${startNewAction()}${adminRecoveryMarkup()}
       ${!created ? `<button class="button button-primary" id="pas-create-pl" ${operationBusy || (!prepared?.eligible.length && !state.creationRequestId) || ['blocked', 'persisting'].includes(pl?.phase) ? 'disabled' : ''}>${state.creationRequestId ? 'Retry / Resume Picking List' : 'GENERATE PICKING LIST'}</button><button class="button" id="pas-remove-excel" ${operationBusy || !state.file || hasProtectedOperation() ? 'disabled' : ''}>REMOVE EXCEL</button>` : ''}
@@ -771,7 +792,7 @@
           recovered.packages = recovered.packages.map(r => ({ printCount: 0, printStatus: STATUS.NOT_PRINTED, ...r }));
           state.recoveryCandidate = recovered; state.creationRequestId = null; state.generationUncertain = false;
           state.workflowError = `Existing Picking List ${recovered.pickingListNumber} owns this package set. Resume it to continue.`;
-        } catch (recoveryError) { if (context && run === lifecycle && error.code === 'PACKAGE_RESERVED') state.workflowError = recoveryError.message; }
+        } catch (recoveryError) { if (context && run === lifecycle && error.code === 'PACKAGE_RESERVED') { state.workflowError = recoveryError.message; if (recoveryError.code === 'PACKAGE_STATE_CONFLICT' && recoveryError.diagnosis) state.staleOwnership = recoveryError.diagnosis; } }
       }
       if (!state.pl?.pickingListRecordId && ['INVALID_INPUT', 'REQUEST_ID_REQUIRED', 'INVALID_ROWS', 'DUPLICATE_SOURCE_TRACKING', 'PACKAGE_STATUS_SCHEMA_ERROR', 'PROCESSING_STATUS_NOT_AVAILABLE', 'NO_ELIGIBLE_PACKAGES', 'PL_NUMBER_COLLISION', 'PICKING_LIST_NOT_CONFIGURED'].includes(error.code)) state.generationUncertain = false;
       save();
@@ -783,7 +804,7 @@
     render,
     init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; startLocationLookup(); restore(); renderSetup(); reconcilePickingList(); },
     cleanup() { locationLookup?.dispose(); locationLookup=null; adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.getElementById("pas-print-frame")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
-    _test: { inventoryPrintSnapshot, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, resumeExistingPickingList, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, qrSvg, qrImage, printDocument, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, setProgress, clearProgress, progressMarkup, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
+    _test: { inventoryPrintSnapshot, reconcileStaleOwnership, staleOwnershipMarkup, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, resumeExistingPickingList, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, qrSvg, qrImage, printDocument, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, setProgress, clearProgress, progressMarkup, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
   };
   window.MkiteClientToolModules["b044.put-away-scan"] = module;
 }(window, document));

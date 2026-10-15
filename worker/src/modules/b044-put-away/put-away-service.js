@@ -9,6 +9,12 @@ import { PickingListError } from '../picking-lists/picking-list-service.js';
 export const MAX_ROWS = 500;
 const fail = (code, message) => { throw new PickingListError(code, message); };
 const natural = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+const B044_ACTION = / - B044 SCAN PUT AWAY TOOL: PL NUMBER: (.+?) - (CREATED|DONE PUTTING AWAY|CANCELLED)$/;
+const stateFingerprint = value => {
+  const text = JSON.stringify(value); let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+  return `b044-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+};
 export function normalizeRows(rows) {
   if (!Array.isArray(rows) || !rows.length || rows.length > MAX_ROWS) fail('INVALID_ROWS', `Provide 1–${MAX_ROWS} valid source rows per upload.`);
   const seen = new Set();
@@ -50,9 +56,11 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       const matches = exact.length ? exact : [...bySku.entries()]
         .filter(([sku]) => sku && (sku.includes(row.normalizedTracking) || row.normalizedTracking.includes(sku)))
         .flatMap(([, candidates]) => candidates);
-      const active = matches.filter(record => record.fields?.[F.status] === 'Active');
+      const latestAction = record => String(record.fields?.[F.note] || '').split(/\r?\n/).filter(line => line.includes(' - B044 SCAN PUT AWAY TOOL: PL NUMBER: ')).at(-1)?.match(B044_ACTION)?.[2] || '';
+      const completedHistory = matches.some(record => record.fields?.[F.status] === 'Active' && latestAction(record) === 'DONE PUTTING AWAY');
+      const active = matches.filter(record => record.fields?.[F.status] === 'Active' && latestAction(record) !== 'DONE PUTTING AWAY');
       const matchType = exact.length ? 'EXACT' : matches.length ? 'PARTIAL' : 'NONE';
-      const eligibility = !matches.length ? 'NOT_FOUND' : !active.length ? 'BLOCKED_STATUS' : active.length > 1 ? 'AMBIGUOUS' : 'ELIGIBLE';
+      const eligibility = !matches.length ? 'NOT_FOUND' : completedHistory && !active.length ? 'BLOCKED_HISTORY' : !active.length ? 'BLOCKED_STATUS' : active.length > 1 ? 'AMBIGUOUS' : 'ELIGIBLE';
       const record = matches.length === 1 ? matches[0] : undefined;
       const fields = record?.fields || {};
       const packageStatus = record ? cleanText(fields[F.status]) : matches.map(r => cleanText(r.fields?.[F.status])).join(', ');
@@ -61,7 +69,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       return { ...row, sourceTrackingNumber: row.trackingNumber,
         ...(record ? { trackingNumber: cleanText(fields[F.sku]), normalizedTracking: normalizeSku(fields[F.sku]) } : {}),
         packageRecordId: eligibility === 'ELIGIBLE' ? record?.record_id || '' : '', ...(includeReservationIdentity && record ? { reservationRecordId: record.record_id } : {}), currentLocation: cleanText(fields[F.location]), packageStatus, eligibility, matchType,
-        reason: eligibility === 'NOT_FOUND' ? 'NOT FOUND IN MKITE PACKAGE CLASS' : eligibility === 'AMBIGUOUS' ? `AMBIGUOUS ${matchType} MATCH — MULTIPLE ACTIVE PACKAGE RECORDS` : eligibility === 'BLOCKED_STATUS' ? `STATUS ${packageStatus || 'EMPTY'}` : '' };
+        reason: eligibility === 'NOT_FOUND' ? 'NOT FOUND IN MKITE PACKAGE CLASS' : eligibility === 'AMBIGUOUS' ? `AMBIGUOUS ${matchType} MATCH — MULTIPLE ACTIVE PACKAGE RECORDS` : eligibility === 'BLOCKED_HISTORY' ? 'HISTORICAL B044 COMPLETION — MANUAL REVIEW REQUIRED' : eligibility === 'BLOCKED_STATUS' ? `STATUS ${packageStatus || 'EMPTY'}` : '' };
     });
     // Different Excel queries can resolve to the same package. Do not assign it twice.
     const assignments = new Map();
@@ -187,7 +195,10 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     if (!['assigning', 'operational', 'cancelling'].includes(job.phase)) fail('PICKING_LIST_RECOVERY_BLOCKED', 'The existing Picking List is not in a safely recoverable state.');
     const reconciled = await reconcile({ pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId });
     if (job.phase === 'operational' && reconciled.completedCount === reconciled.totalCount) fail('PICKING_LIST_TERMINAL', 'The uploaded packages belong to a completed Picking List. It cannot be resumed.');
-    if (job.phase === 'operational' && !reconciled.executionAllowed) fail('PACKAGE_STATE_CONFLICT', 'The authoritative Picking List package ownership or status is not safe to resume.');
+    if (job.phase === 'operational' && !reconciled.executionAllowed) {
+      const error = new PickingListError('PACKAGE_STATE_CONFLICT', 'The authoritative Picking List package ownership or status is not safe to resume.');
+      error.diagnosis = reconciled; throw error;
+    }
     const statusById = new Map(reconciled.packages.map(row => [row.packageRecordId, row]));
     const recovered = publicJob({ ...job, rows: job.rows.map(row => ({ ...row, ...(statusById.get(row.packageRecordId) || {}) })) });
     const descriptor = (record, reservationState) => ({ packageRecordId: record.record_id, trackingNumber: cleanText(record.fields?.[F.sku]), packageStatus: cleanText(record.fields?.[F.status]), reservationState });
@@ -235,10 +246,15 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       if (record.record_id !== row.packageRecordId || normalizeSku(record.fields?.[F.sku]) !== row.normalizedTracking) fail('PACKAGE_STATE_CONFLICT', 'Package identity changed.');
       const packageStatus = record.fields[F.status];
       const lastAction = String(record.fields?.[F.note] || '').split(/\r?\n/).filter(line => line.includes(' - B044 SCAN PUT AWAY TOOL: PL NUMBER: ')).at(-1) || '';
+      const actionMatch = lastAction.match(B044_ACTION), latestPickingListNumber = actionMatch?.[1] || '', latestB044Action = actionMatch?.[2] || '';
       const suffix = ` - B044 SCAN PUT AWAY TOOL: PL NUMBER: ${job.pickingListNumber} - `;
       const noteOwnershipValid = lastAction.endsWith(suffix + 'CREATED') || lastAction.endsWith(suffix + 'DONE PUTTING AWAY');
-      const reservationOwned = Boolean(job.requestId) && await storage.get(`reserved:${row.packageRecordId}`) === job.requestId;
-      const ownershipValid = noteOwnershipValid && reservationOwned;
+      const reservationOwner = await storage.get(`reserved:${row.packageRecordId}`);
+      const reservationOwned = Boolean(job.requestId) && reservationOwner === job.requestId;
+      const reservationValid = reservationOwned || (packageStatus === 'Processed' && !reservationOwner);
+      const otherOwnerJob = reservationOwner && reservationOwner !== job.requestId ? await storage.get(`job:${reservationOwner}`) : null;
+      const otherOwnerActive = Boolean(otherOwnerJob && ['persisting', 'assigning', 'operational', 'cancelling', 'reconciling'].includes(otherOwnerJob.phase));
+      const ownershipValid = noteOwnershipValid && reservationValid;
       let partsPersisted = !row.commandRaw, completionVerified = false;
       if (packageStatus === 'Processed' && row.completionIntent) {
         try {
@@ -257,14 +273,71 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
           } catch { partsPersisted = false; }
         }
       }
-      packages.push({ packageRecordId: row.packageRecordId, packageStatus, currentStatus: packageStatus, ownershipValid, historicalCompletionExists: Boolean(row.completedAt || row.completionIntent || snapshot.packages.find(p => p.packageRecordId === row.packageRecordId)?.completedAt), partsPersisted,
+      const historicalCompletionExists = Boolean(row.completedAt || row.completionIntent || snapshot.packages.find(p => p.packageRecordId === row.packageRecordId)?.completedAt);
+      let classification = 'UNSAFE_UNKNOWN', reason = 'Package state cannot be proven safe.';
+      if (packageStatus === 'Processed' && historicalCompletionExists && noteOwnershipValid && reservationValid) { classification = 'SAFE_COMPLETED'; reason = reservationOwned ? 'Completion, history, identity, and reservation belong to this Picking List.' : 'Completion and history belong to this Picking List; no active reservation remains.'; }
+      else if (packageStatus === 'Processing' && noteOwnershipValid && reservationOwned) { classification = 'SAFE_ASSIGNED'; reason = 'Active assignment and reservation belong to this Picking List.'; }
+      else if (otherOwnerActive) { classification = 'CONFLICT_OTHER_OWNER'; reason = 'Durable reservation belongs to another active operation.'; }
+      else if (reservationOwner && reservationOwner !== job.requestId) { classification = 'UNSAFE_UNKNOWN'; reason = 'Durable reservation points to another operation whose ownership is not active or cannot be proven.'; }
+      else if (packageStatus === 'Active' && reservationOwned && latestB044Action === 'CANCELLED' && latestPickingListNumber && !historicalCompletionExists) { classification = 'STALE_RELEASED'; reason = `Package is Active after cancellation by ${latestPickingListNumber}, but its Durable Object reservation still points to this job.`; }
+      packages.push({ packageRecordId: row.packageRecordId, trackingNumber: row.trackingNumber, jobState: row.completedAt ? 'completed' : 'assigned', packageStatus, currentStatus: packageStatus, reservationOwner: reservationOwner || null, reservationOwnerPhase: otherOwnerJob?.phase || null, latestB044Action, latestPickingListNumber, classification, reason, ownershipValid, historicalCompletionExists, partsPersisted,
         reconciliationRequired: packageStatus === 'Processed' && !completionVerified,
         completedAt: completionVerified ? (row.completionIntent?.confirmedAt || snapshot.packages.find(p => p.packageRecordId === row.packageRecordId)?.completedAt) : null,
         completionIntent: row.completionIntent || null });
     }
     const completedCount = packages.filter(row => row.packageStatus === 'Processed').length;
     const executionAllowed = packages.every(row => row.ownershipValid && ['Processing', 'Processed'].includes(row.packageStatus));
-    return { pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId, totalCount: packages.length, assignedCount: packages.length, processedCount: completedCount, processingCount: packages.filter(r => r.packageStatus === 'Processing').length, executionAllowed, cancellationAllowed: executionAllowed && completedCount === 0 && ['operational','cancelling'].includes(job.phase || 'operational'), completedCount, remainingCount: packages.length - completedCount, packages };
+    const summary = { total: packages.length, safeCompleted: packages.filter(r => r.classification === 'SAFE_COMPLETED').length, safeAssigned: packages.filter(r => r.classification === 'SAFE_ASSIGNED').length, staleReleased: packages.filter(r => r.classification === 'STALE_RELEASED').length, conflicts: packages.filter(r => r.classification === 'CONFLICT_OTHER_OWNER').length, unsafe: packages.filter(r => r.classification === 'UNSAFE_UNKNOWN').length };
+    const blockingReasons = [];
+    if (summary.safeAssigned) blockingReasons.push('Still-valid assigned packages cannot be silently released.');
+    if (summary.conflicts) blockingReasons.push('One or more packages are reserved by another operation.');
+    if (summary.unsafe) blockingReasons.push('One or more package states are ambiguous.');
+    const reconciliationAllowed = Boolean(job.requestId && ['operational', 'reconciling'].includes(job.phase || 'operational') && summary.staleReleased && !blockingReasons.length);
+    const fingerprint = stateFingerprint({ requestId: job.requestId, phase: job.phase, master: master.record_id, packages: packages.map(r => [r.packageRecordId, r.packageStatus, r.reservationOwner, r.reservationOwnerPhase, r.latestPickingListNumber, r.latestB044Action, r.classification]) });
+    return { pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId, requestId: job.requestId, phase: job.phase || 'unknown', totalCount: packages.length, assignedCount: packages.length, processedCount: completedCount, processingCount: packages.filter(r => r.packageStatus === 'Processing').length, executionAllowed, cancellationAllowed: executionAllowed && completedCount === 0 && ['operational','cancelling'].includes(job.phase || 'operational'), completedCount, remainingCount: packages.length - completedCount, summary, packages, reconciliationAllowed, blockingReasons, fingerprint };
+  }
+  async function reconcileStale(input) {
+    validateInput(input);
+    const number = cleanText(input.pickingListNumber);
+    if (cleanText(input.confirmPickingListNumber) !== number) fail('RECONCILIATION_CONFIRMATION_REQUIRED', 'Type the full Picking List number to confirm reconciliation.');
+    const key = await storage.get(`pl:${number}`), job = key && await storage.get(key);
+    if (!job || job.pickingListRecordId !== cleanText(input.pickingListRecordId)) fail('PL_NOT_FOUND', 'Picking List does not match the authoritative operation.');
+    if (job.phase === 'reconciled') return { ...publicJob(job), reconciliation: job.reconciliation, alreadyReconciled: true };
+    if (job.phase === 'reconciling' && job.reconciliation) {
+      const released = new Set(job.reconciliation.releasedPackageRecordIds || []), affected = new Set(job.reconciliation.affectedPackageRecordIds || []);
+      for (const row of job.rows) {
+        const record = await records.getRecord({ ...args, recordId: row.packageRecordId }), status = record.fields?.[F.status];
+        if (record.record_id !== row.packageRecordId || normalizeSku(record.fields?.[F.sku]) !== row.normalizedTracking) fail('RECONCILIATION_STATE_CHANGED', 'A package identity changed during reconciliation.');
+        const last = String(record.fields?.[F.note] || '').split(/\r?\n/).filter(line => line.includes(' - B044 SCAN PUT AWAY TOOL: PL NUMBER: ')).at(-1) || '', match = last.match(B044_ACTION);
+        const owner = await storage.get(`reserved:${row.packageRecordId}`);
+        if (affected.has(row.packageRecordId)) {
+          if (status !== 'Active' || match?.[2] !== 'CANCELLED' || !match?.[1] || (released.has(row.packageRecordId) ? owner : owner !== job.requestId)) fail('RECONCILIATION_STATE_CHANGED', 'Released package state changed during reconciliation.');
+        } else if (status !== 'Processed' || (owner && owner !== job.requestId) || !last.endsWith(` - B044 SCAN PUT AWAY TOOL: PL NUMBER: ${job.pickingListNumber} - DONE PUTTING AWAY`)) fail('RECONCILIATION_STATE_CHANGED', 'Completed package state changed during reconciliation.');
+      }
+      for (const packageRecordId of affected) if (!released.has(packageRecordId)) { await storage.delete(`reserved:${packageRecordId}`); job.reconciliation.releasedPackageRecordIds.push(packageRecordId); await storage.put(key, job); }
+      for (const row of job.rows.filter(row => !affected.has(row.packageRecordId))) if (await storage.get(`reserved:${row.packageRecordId}`) === job.requestId) await storage.delete(`reserved:${row.packageRecordId}`);
+      await pickingLists.appendLifecycle(job, `STATUS: PARTIALLY COMPLETED / RECONCILED\nRECONCILED: ${warehouseTimestamp(job.reconciliation.startedAt, config.warehouseTimeZone)}\nREASON: STALE DURABLE OWNERSHIP AFTER VERIFIED RELEASE\nOriginal packages: ${job.rows.length}\nCompleted packages preserved: ${job.reconciliation.completedPackageCount}\nReleased packages reconciled: ${job.reconciliation.staleReleasedPackageCount}\nREQUEST ID: ${job.requestId}`);
+      job.phase = 'reconciled'; job.message = 'PICKING LIST OWNERSHIP RECONCILED'; Object.assign(job.reconciliation, { completedAt: job.reconciliation.startedAt, resultingPhase: 'reconciled' }); await storage.put(key, job);
+      return { ...publicJob(job), reconciliation: job.reconciliation, alreadyReconciled: false };
+    }
+    const diagnosed = await reconcile(input);
+    if (!cleanText(input.fingerprint) || input.fingerprint !== diagnosed.fingerprint) fail('RECONCILIATION_STATE_CHANGED', 'Picking List ownership changed after diagnosis. Diagnose again before reconciling.');
+    if (!diagnosed.reconciliationAllowed) fail('RECONCILIATION_BLOCKED', diagnosed.blockingReasons.join(' ') || 'Stale ownership cannot be proven safe.');
+    const stale = diagnosed.packages.filter(row => row.classification === 'STALE_RELEASED');
+    const reconciledAt = new Date(now()).toISOString();
+    job.phase = 'reconciling';
+    job.reconciliation = { operationId: `stale-ownership:${job.requestId}`, reason: 'STALE_DURABLE_OWNERSHIP_AFTER_VERIFIED_RELEASE', startedAt: reconciledAt, previousPhase: diagnosed.phase, completedPackageCount: diagnosed.summary.safeCompleted, staleReleasedPackageCount: stale.length, affectedPackageRecordIds: stale.map(row => row.packageRecordId), releasedPackageRecordIds: [] };
+    await storage.put(key, job);
+    for (const row of stale) {
+      if (await storage.get(`reserved:${row.packageRecordId}`) !== job.requestId) fail('RECONCILIATION_STATE_CHANGED', 'A package reservation changed during reconciliation.');
+      await storage.delete(`reserved:${row.packageRecordId}`);
+      job.reconciliation.releasedPackageRecordIds.push(row.packageRecordId); await storage.put(key, job);
+    }
+    for (const row of diagnosed.packages.filter(row => row.classification === 'SAFE_COMPLETED')) if (await storage.get(`reserved:${row.packageRecordId}`) === job.requestId) await storage.delete(`reserved:${row.packageRecordId}`);
+    await pickingLists.appendLifecycle(job, `STATUS: PARTIALLY COMPLETED / RECONCILED\nRECONCILED: ${warehouseTimestamp(reconciledAt, config.warehouseTimeZone)}\nREASON: STALE DURABLE OWNERSHIP AFTER VERIFIED RELEASE\nOriginal packages: ${diagnosed.summary.total}\nCompleted packages preserved: ${diagnosed.summary.safeCompleted}\nReleased packages reconciled: ${stale.length}\nREQUEST ID: ${job.requestId}`);
+    job.phase = 'reconciled'; job.message = 'PICKING LIST OWNERSHIP RECONCILED';
+    Object.assign(job.reconciliation, { completedAt: reconciledAt, resultingPhase: 'reconciled' }); await storage.put(key, job);
+    return { ...publicJob(job), reconciliation: job.reconciliation, summary: diagnosed.summary, alreadyReconciled: false };
   }
   async function persistProcessTime(key, job, outcome) {
     // Only updated clients create this durable first-scan checkpoint. Historical
@@ -321,6 +394,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       await pickingLists.persistCompletion(job, fields);
     }
     if (row.commandRaw && row.completedAt && partUsed) for (const part of row.completionIntent.parts) await partUsed.recordPartUsage({clientId:'B044',partSku:part.sku,event:`B044 PUT AWAY - ADD PART BY PACKAGE:${row.trackingNumber}`,quantity:part.quantity,warehouse:'MKS66',toolId:'CT-MKS66-B044-0001',referenceId:row.packageRecordId,usedBy:cleanText(input.usedBy)||'Warehouse Operator',note:`Picking List ${job.pickingListNumber}`,idempotencyKey:`B044:${row.completionIntent.requestId}:${part.sku}`});
+    if (await storage.get(`reserved:${row.packageRecordId}`) === job.requestId) await storage.delete(`reserved:${row.packageRecordId}`);
     if (job.rows.every(r => r.completedAt)) {
       const verified = await reconcile({ pickingListNumber: job.pickingListNumber, pickingListRecordId: job.pickingListRecordId });
       if (verified.packages.every(r => r.packageStatus === 'Processed' && r.completedAt && !r.reconciliationRequired)) {
@@ -356,11 +430,15 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       return fields[F.status] === 'Processed' ? 'processedRetained' : 'rollback';
     }
     for (const row of job.rows) {
-      if (await storage.get(`reserved:${row.packageRecordId}`) !== input.requestId) fail('PACKAGE_STATE_CONFLICT', 'Package reservation belongs to another operation.');
-      if (verify(row, byId.get(row.packageRecordId)) === 'processedRetained') fail('CANCEL_PROCESSED_BLOCKED', 'Cancellation is blocked because a package is Processed. Recover any pending final scan first.');
+      const owner = await storage.get(`reserved:${row.packageRecordId}`);
+      const outcome = verify(row, byId.get(row.packageRecordId));
+      const reservationValid = owner === input.requestId || (!owner && (job.cancelledIds?.includes(row.packageRecordId) || outcome === 'processedRetained'));
+      if (!reservationValid) fail('PACKAGE_STATE_CONFLICT', 'Package reservation belongs to another operation.');
+      if (outcome === 'processedRetained') fail('CANCEL_PROCESSED_BLOCKED', 'Cancellation is blocked because a package is Processed. Recover any pending final scan first.');
     }
     job.phase = 'cancelling'; job.cancelledAt ||= new Date(now()).toISOString(); job.cancelledIds ||= []; job.cancelOutcomes ||= {};
     await storage.put(key, job); // Blocks all subsequent completion requests before rollback.
+    for (const packageRecordId of job.cancelledIds) if (await storage.get(`reserved:${packageRecordId}`) === job.requestId) await storage.delete(`reserved:${packageRecordId}`);
     options.onStage?.('ROLLBACK_PACKAGES', { operationState: job.phase });
     for (const row of job.rows.filter(row => !job.cancelledIds.includes(row.packageRecordId)).slice(0, 8)) {
       const current = await records.getRecord({ ...args, recordId: row.packageRecordId });
@@ -375,6 +453,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       }
       job.cancelOutcomes[row.packageRecordId] = outcome === 'rollback' ? 'processingReturnedToActive' : outcome;
       job.cancelledIds.push(row.packageRecordId); await storage.put(key, job);
+      if (await storage.get(`reserved:${row.packageRecordId}`) === job.requestId) await storage.delete(`reserved:${row.packageRecordId}`);
     }
     if (job.cancelledIds.length === job.rows.length) {
       options.onStage?.('CANCEL_MASTER');
@@ -391,5 +470,5 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
     }
     return publicJob(job);
   }
-  return { prepare, create, recover, startProcess, complete, cancel, reconcile, adminRecover: input => recoverBrokenPickingList(input, config, records, storage, now) };
+  return { prepare, create, recover, startProcess, complete, cancel, reconcile, diagnoseReconciliation: reconcile, reconcileStale, adminRecover: input => recoverBrokenPickingList(input, config, records, storage, now) };
 }

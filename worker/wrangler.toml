@@ -5,6 +5,10 @@ compatibility_date = "2026-09-03"
 # Configure production values with Worker environment/secrets. Do not place
 # FEISHU_APP_SECRET or other credentials in this file.
 [vars]
+FEISHU_DATA_ENVIRONMENT = "production"
+WORKER_RUNTIME_ENVIRONMENT = "production"
+# Production writes also require the deployment-only
+# PRODUCTION_MUTATION_AUTHORIZATION Worker secret. It must not be in .dev.vars.
 FEISHU_PROJECT_TABLE_ID = "tbldVnRmtOLM1Jzw" # PROJECT CLASS
 FEISHU_CASE_CATEGORY_TABLE_ID = "tblwFyckkj7CxLnt" # CASE CATEGORY
 FEISHU_CASE_CLASS_TABLE_ID = "tbluJiLs4arOJgt6" # CASE CLASS

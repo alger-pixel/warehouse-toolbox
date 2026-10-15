@@ -12,7 +12,7 @@ const source = trackingNumber => ({ trackingNumber, arrivalDate: '2026-09-05', i
 const packageRecord = (sku, status = 'Active', location = 'A-2') => ({ record_id: `rec-${sku}`, fields: { SKU: sku, STATUS: status, LOCATION: location, 'CLIENT ID': 'B044', 'DATE OF RECEIVED': 123, NOTE: 'old history' } });
 function fixture(packages = [packageRecord('A')], options = {}) {
   const data = new Map(packages.map(r => [r.record_id, structuredClone(r)])); const events = []; const memory = new Map();
-  const storage = { async get(k) { return structuredClone(memory.get(k)); }, async put(k, v) { memory.set(k, structuredClone(v)); } };
+  const storage = { async get(k) { return structuredClone(memory.get(k)); }, async put(k, v) { memory.set(k, structuredClone(v)); }, async delete(k) { memory.delete(k); } };
   const records = {
     async listFields() { return [{ field_name: 'PART USED', type: 1 }, { field_name: 'STATUS', type: 3, property: { options: ['Active', 'Processing', 'Processed'].map(name => ({ name })) } }]; },
     async listRecords({ tableId }) { events.push('list-' + tableId); return [...data.values()].filter(r => tableId === 'packages' ? r.record_id.startsWith('rec-') : r.record_id.startsWith('pl-')).map(r => structuredClone(r)); },
@@ -126,14 +126,14 @@ test('ambiguous package resolution remains blocked during recovery',async()=>{
 test('recovery rejects terminal jobs and returns cancellation-in-progress for safe retry', async () => {
   const cancelled = fixture(); const pl = await cancelled.service().create(cancelled.input);
   await cancelled.service().cancel({ requestId: cancelled.input.requestId, pickingListNumber: pl.pickingListNumber });
-  await assert.rejects(cancelled.service().recover({ rows: cancelled.input.rows }), error => error.code === 'PICKING_LIST_TERMINAL');
+  await assert.rejects(cancelled.service().recover({ rows: cancelled.input.rows }), error => error.code === 'RECOVERY_NOT_FOUND');
   const cancelling = fixture(); await cancelling.service().create(cancelling.input);
   cancelling.memory.get(`job:${cancelling.input.requestId}`).phase = 'cancelling';
   const recovered = await cancelling.service().recover({ rows: cancelling.input.rows });
   assert.equal(recovered.phase, 'cancelling'); assert.equal(recovered.requestId, cancelling.input.requestId);
   const completed = fixture(); const completedPl = await completed.service().create(completed.input);
   await completed.service().complete({ pickingListNumber: completedPl.pickingListNumber, pickingListRecordId: completedPl.pickingListRecordId, packageRecordId: completedPl.packages[0].packageRecordId, trackingNumber: completedPl.packages[0].trackingNumber, confirmationTracking: completedPl.packages[0].trackingNumber });
-  await assert.rejects(completed.service().recover({ rows: completed.input.rows }), error => error.code === 'PICKING_LIST_TERMINAL');
+  await assert.rejects(completed.service().recover({ rows: completed.input.rows }), error => error.code === 'RECOVERY_NOT_FOUND');
 });
 test('generic number collision retries and generic XLSX supports arbitrary columns and literal text', async () => {
   const values = ['CLASH', 'NEXT']; const service = createPickingListService(config, { listRecords: async () => [{ fields: { 'PICKING LIST NUMBER': 'OTHER-PL-20260905-CLASH' } }] }, { randomId: () => values.shift() });
@@ -276,6 +276,72 @@ test('reconciliation reports authoritative execution eligibility from status, no
   assert.equal(result.executionAllowed, false); assert.equal(result.cancellationAllowed, false);
 });
 
+function staleOwnershipFixture() {
+  const f = fixture(Array.from({ length: 9 }, (_, i) => packageRecord(String(i + 1))));
+  return { f, async arrange() {
+    const pl = await f.service().create(f.input); await f.service().create(f.input);
+    await f.service().complete({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, packageRecordId: 'rec-1', trackingNumber: '1', confirmationTracking: '1' });
+    for (let i = 2; i <= 9; i++) { const record = f.data.get(`rec-${i}`); record.fields.STATUS = 'Active'; record.fields.NOTE += `\n2026/09/05 16:22 - B044 SCAN PUT AWAY TOOL: PL NUMBER: B044-PL-20260905-0002 - CANCELLED`; }
+    return pl;
+  } };
+}
+
+test('stale ownership diagnosis separates completed and later released packages without writes', async () => {
+  const { f, arrange } = staleOwnershipFixture(), pl = await arrange(), beforeData = structuredClone(f.data), beforeMemory = structuredClone(f.memory);
+  const result = await f.service().diagnoseReconciliation({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId });
+  assert.deepEqual(result.summary, { total: 9, safeCompleted: 1, safeAssigned: 0, staleReleased: 8, conflicts: 0, unsafe: 0 });
+  assert.equal(result.reconciliationAllowed, true); assert.equal(result.packages[0].classification, 'SAFE_COMPLETED');
+  assert.ok(result.packages.slice(1).every(row => row.classification === 'STALE_RELEASED')); assert.deepEqual(f.data, beforeData); assert.deepEqual(f.memory, beforeMemory);
+  await assert.rejects(f.service().recover({ rows: f.input.rows }), error => error.code === 'PACKAGE_STATE_CONFLICT' && error.diagnosis.summary.staleReleased === 8);
+});
+
+test('explicit stale reconciliation preserves completion, releases only stale reservations, audits truthfully, and is idempotent', async () => {
+  const { f, arrange } = staleOwnershipFixture(), pl = await arrange(), service = f.service();
+  const diagnosis = await service.diagnoseReconciliation({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId });
+  const input = { pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, fingerprint: diagnosis.fingerprint, confirmPickingListNumber: pl.pickingListNumber };
+  const result = await service.reconcileStale(input);
+  assert.equal(result.phase, 'reconciled'); assert.equal(f.data.get('rec-1').fields.STATUS, 'Processed'); assert.equal(f.memory.has('reserved:rec-1'), false);
+  for (let i = 2; i <= 9; i++) { assert.equal(f.data.get(`rec-${i}`).fields.STATUS, 'Active'); assert.equal(f.memory.has(`reserved:rec-${i}`), false); }
+  const detail = f.data.get('pl-master').fields['PICKING LIST DETAIL']; assert.match(detail, /STATUS: PARTIALLY COMPLETED \/ RECONCILED/); assert.match(detail, /Completed packages preserved: 1/); assert.match(detail, /Released packages reconciled: 8/);
+  const mutations = f.events.filter(event => event.fields).length, repeated = await service.reconcileStale(input);
+  assert.equal(repeated.alreadyReconciled, true); assert.equal(f.events.filter(event => event.fields).length, mutations);
+});
+test('released stale packages can enter a future PL while the completed package remains excluded', async () => {
+  const { f, arrange } = staleOwnershipFixture(), pl = await arrange(), service = f.service(), diagnosis = await service.diagnoseReconciliation({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId });
+  await service.reconcileStale({ pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,fingerprint:diagnosis.fingerprint,confirmPickingListNumber:pl.pickingListNumber });
+  const next = await service.create({ ...f.input, requestId:'future-operation-123456', rows:Array.from({length:9},(_,i)=>source(String(i+1))) });
+  assert.equal(next.phase,'operational'); assert.equal(next.packages.length,8); assert.ok(next.packages.every(row=>row.packageRecordId!=='rec-1'));
+  assert.equal(f.data.get('rec-1').fields.STATUS,'Processed'); assert.equal(f.memory.has('reserved:rec-1'),false); for(let i=2;i<=9;i++)assert.equal(f.memory.get(`reserved:rec-${i}`),'future-operation-123456');
+});
+test('stale reconciliation resumes after released reservations and a failed master audit write', async () => {
+  const { f, arrange } = staleOwnershipFixture(), pl = await arrange(), service = f.service(), diagnosis = await service.diagnoseReconciliation({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId });
+  const update = f.records.updateRecord; let failOnce = true; f.records.updateRecord = async args => { if (args.recordId === 'pl-master' && failOnce) { failOnce = false; throw new Error('master unavailable'); } return update(args); };
+  const input = { pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, fingerprint: diagnosis.fingerprint, confirmPickingListNumber: pl.pickingListNumber };
+  await assert.rejects(service.reconcileStale(input)); assert.equal(f.memory.get(`job:${f.input.requestId}`).phase, 'reconciling');
+  for (let i = 2; i <= 9; i++) assert.equal(f.memory.has(`reserved:rec-${i}`), false);
+  const result = await service.reconcileStale(input); assert.equal(result.phase, 'reconciled'); assert.equal(f.data.get('pl-master').fields['PICKING LIST DETAIL'].match(/STATUS: PARTIALLY COMPLETED \/ RECONCILED/g).length, 1);
+});
+
+test('stale reconciliation blocks other-owner, ambiguous, and changed-after-diagnosis states', async () => {
+  for (const mode of ['other-owner', 'ambiguous', 'changed']) {
+    const { f, arrange } = staleOwnershipFixture(), pl = await arrange(), service = f.service();
+    let diagnosis = await service.diagnoseReconciliation({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId });
+    if (mode === 'other-owner') { f.memory.set('reserved:rec-2', 'another-request'); f.memory.set('job:another-request', { phase:'operational' }); diagnosis = await service.diagnoseReconciliation({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId }); assert.equal(diagnosis.summary.conflicts, 1); }
+    if (mode === 'ambiguous') { f.data.get('rec-2').fields.NOTE = 'unknown'; diagnosis = await service.diagnoseReconciliation({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId }); assert.equal(diagnosis.summary.unsafe, 1); }
+    if (mode === 'changed') f.data.get('rec-2').fields.STATUS = 'Processing';
+    const input = { pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId, fingerprint: diagnosis.fingerprint, confirmPickingListNumber: pl.pickingListNumber };
+    await assert.rejects(service.reconcileStale(input), error => mode === 'changed' ? error.code === 'RECONCILIATION_STATE_CHANGED' : error.code === 'RECONCILIATION_BLOCKED');
+  }
+});
+
+test('healthy operational and fully cancelled Picking Lists do not offer stale reconciliation', async () => {
+  const healthy = fixture(), pl = await healthy.service().create(healthy.input), diagnosis = await healthy.service().diagnoseReconciliation({ pickingListNumber: pl.pickingListNumber, pickingListRecordId: pl.pickingListRecordId });
+  assert.equal(diagnosis.summary.safeAssigned, 1); assert.equal(diagnosis.reconciliationAllowed, false);
+  const cancelled = fixture(), cancelledPl = await cancelled.service().create(cancelled.input); await cancelled.service().cancel({ requestId: cancelled.input.requestId, pickingListNumber: cancelledPl.pickingListNumber });
+  const cancelledDiagnosis = await cancelled.service().diagnoseReconciliation({ pickingListNumber: cancelledPl.pickingListNumber, pickingListRecordId: cancelledPl.pickingListRecordId });
+  assert.equal(cancelledDiagnosis.reconciliationAllowed, false); assert.equal(cancelled.memory.has('reserved:rec-A'), false);
+});
+
 test('cancellation resumes lost rollback acknowledgement without duplicate notes', async () => {
   const f = fixture(); const pl = await f.service().create(f.input);
   const update = f.records.updateRecord; let once = true;
@@ -285,6 +351,22 @@ test('cancellation resumes lost rollback acknowledgement without duplicate notes
   assert.equal(f.memory.get(`job:${f.input.requestId}`).phase, 'cancelling');
   assert.equal((await f.service().cancel(input)).phase, 'cancelled');
   assert.equal(f.data.get('rec-A').fields.NOTE.match(/ - CANCELLED/g).length, 1);
+});
+test('successful completion releases its active reservation and retry repairs a failed release', async () => {
+  const f=fixture(),pl=await f.service().create(f.input),remove=f.storage.delete;let failOnce=true;f.storage.delete=async key=>{if(failOnce){failOnce=false;throw Error('storage unavailable');}return remove.call(f.storage,key);};
+  const input={pickingListNumber:pl.pickingListNumber,pickingListRecordId:pl.pickingListRecordId,packageRecordId:'rec-A',trackingNumber:'A',confirmationTracking:'A'};
+  await assert.rejects(f.service().complete(input));assert.equal(f.data.get('rec-A').fields.STATUS,'Processed');assert.ok(f.memory.get(`job:${f.input.requestId}`).rows[0].completedAt);assert.equal(f.memory.get('reserved:rec-A'),f.input.requestId);
+  await f.service().complete(input);assert.equal(f.memory.has('reserved:rec-A'),false);
+  await assert.rejects(f.service().create({...f.input,requestId:'future-completed-12345'}),error=>error.code==='NO_ELIGIBLE_PACKAGES');
+  f.data.get('rec-A').fields.STATUS='Active';const prepared=await f.service().prepare({rows:f.input.rows});assert.equal(prepared.packages[0].eligibility,'BLOCKED_HISTORY');assert.match(prepared.packages[0].reason,/HISTORICAL B044 COMPLETION/);
+  await assert.rejects(f.service().create({...f.input,requestId:'manually-active-12345'}),error=>error.code==='NO_ELIGIBLE_PACKAGES');
+});
+test('cancellation cannot finish with a stale reservation and retry releases a checkpointed package', async () => {
+  const f = fixture(), pl = await f.service().create(f.input), remove = f.storage.delete; let failOnce = true;
+  f.storage.delete = async key => { if (failOnce) { failOnce = false; throw new Error('storage unavailable'); } return remove.call(f.storage, key); };
+  const input = { requestId: f.input.requestId, pickingListNumber: pl.pickingListNumber };
+  await assert.rejects(f.service().cancel(input)); assert.equal(f.memory.get(`job:${f.input.requestId}`).phase, 'cancelling'); assert.equal(f.memory.get('reserved:rec-A'), f.input.requestId);
+  const result = await f.service().cancel(input); assert.equal(result.phase, 'cancelled'); assert.equal(f.memory.has('reserved:rec-A'), false); assert.equal(f.data.get('rec-A').fields.NOTE.match(/ - CANCELLED/g).length, 1);
 });
 
 test('full cancellation advances bounded chunks and can resume a master update failure', async () => {

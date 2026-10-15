@@ -108,6 +108,10 @@
 .pas-recovery-candidate dd { margin:0; font-weight:700; }
 .pas-recovery-candidate .pas-recovery-warning { color:#8a4b00; font-weight:700; }
 .pas-recovery-candidate .button { margin-top:4px; }
+.pas-stale-ownership { border-color:#b96b10; border-left-color:#b96b10; background:color-mix(in srgb,#b96b10 9%,var(--panel-bg)); }
+.pas-stale-ownership details { margin:8px 0; padding:8px 10px; border:1px solid var(--border-color); border-radius:8px; background:var(--panel-bg); }
+.pas-stale-ownership summary { cursor:pointer; font-weight:700; overflow-wrap:anywhere; }
+.pas-stale-ownership details p { margin:7px 0 0; overflow-wrap:anywhere; }
 @media(max-width:700px) { .pas-recovery-candidate dl { grid-template-columns:1fr; } }
 @keyframes pas-progress-indeterminate { from { transform:translateX(-110%); } to { transform:translateX(290%); } }
 @media (prefers-reduced-motion:reduce) { .pas-generation-progress.is-indeterminate .pas-progress-track>span { width:100%; animation:none; opacity:.45; } }
