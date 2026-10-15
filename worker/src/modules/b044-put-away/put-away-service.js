@@ -56,11 +56,9 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       const matches = exact.length ? exact : [...bySku.entries()]
         .filter(([sku]) => sku && (sku.includes(row.normalizedTracking) || row.normalizedTracking.includes(sku)))
         .flatMap(([, candidates]) => candidates);
-      const latestAction = record => String(record.fields?.[F.note] || '').split(/\r?\n/).filter(line => line.includes(' - B044 SCAN PUT AWAY TOOL: PL NUMBER: ')).at(-1)?.match(B044_ACTION)?.[2] || '';
-      const completedHistory = matches.some(record => record.fields?.[F.status] === 'Active' && latestAction(record) === 'DONE PUTTING AWAY');
-      const active = matches.filter(record => record.fields?.[F.status] === 'Active' && latestAction(record) !== 'DONE PUTTING AWAY');
+      const active = matches.filter(record => record.fields?.[F.status] === 'Active');
       const matchType = exact.length ? 'EXACT' : matches.length ? 'PARTIAL' : 'NONE';
-      const eligibility = !matches.length ? 'NOT_FOUND' : completedHistory && !active.length ? 'BLOCKED_HISTORY' : !active.length ? 'BLOCKED_STATUS' : active.length > 1 ? 'AMBIGUOUS' : 'ELIGIBLE';
+      const eligibility = !matches.length ? 'NOT_FOUND' : !active.length ? 'BLOCKED_STATUS' : active.length > 1 ? 'AMBIGUOUS' : 'ELIGIBLE';
       const record = matches.length === 1 ? matches[0] : undefined;
       const fields = record?.fields || {};
       const packageStatus = record ? cleanText(fields[F.status]) : matches.map(r => cleanText(r.fields?.[F.status])).join(', ');
@@ -69,7 +67,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       return { ...row, sourceTrackingNumber: row.trackingNumber,
         ...(record ? { trackingNumber: cleanText(fields[F.sku]), normalizedTracking: normalizeSku(fields[F.sku]) } : {}),
         packageRecordId: eligibility === 'ELIGIBLE' ? record?.record_id || '' : '', ...(includeReservationIdentity && record ? { reservationRecordId: record.record_id } : {}), currentLocation: cleanText(fields[F.location]), packageStatus, eligibility, matchType,
-        reason: eligibility === 'NOT_FOUND' ? 'NOT FOUND IN MKITE PACKAGE CLASS' : eligibility === 'AMBIGUOUS' ? `AMBIGUOUS ${matchType} MATCH — MULTIPLE ACTIVE PACKAGE RECORDS` : eligibility === 'BLOCKED_HISTORY' ? 'HISTORICAL B044 COMPLETION — MANUAL REVIEW REQUIRED' : eligibility === 'BLOCKED_STATUS' ? `STATUS ${packageStatus || 'EMPTY'}` : '' };
+        reason: eligibility === 'NOT_FOUND' ? 'NOT FOUND IN MKITE PACKAGE CLASS' : eligibility === 'AMBIGUOUS' ? `AMBIGUOUS ${matchType} MATCH — MULTIPLE ACTIVE PACKAGE RECORDS` : eligibility === 'BLOCKED_STATUS' ? `STATUS ${packageStatus || 'EMPTY'}` : '' };
     });
     // Different Excel queries can resolve to the same package. Do not assign it twice.
     const assignments = new Map();
@@ -134,7 +132,7 @@ export function createB044PutAwayService(config, records, pickingLists, storage,
       if (!prepared.eligible.length) fail('NO_ELIGIBLE_PACKAGES', 'No Active packages remain eligible. Refresh inventory matching.');
       const createdAt = new Date(now()).toISOString();
       const date = new Intl.DateTimeFormat('en-CA', { timeZone: config.warehouseTimeZone || 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(createdAt)).replaceAll('-', '');
-      const pickingListNumber = await pickingLists.nextNumber('B044', date);
+      const pickingListNumber = await pickingLists.nextNumber(options.pickingListPrefix || 'B044', date);
       const assigned = prepared.eligible.sort((a, b) => natural.compare(a.currentLocation, b.currentLocation) || natural.compare(a.trackingNumber, b.trackingNumber) || a.excelRow - b.excelRow).map((r, i) => ({ ...r, sequence: i + 1, pickingListNumber, createdAt }));
       job = { requestId: input.requestId, fingerprint, phase: 'persisting', pickingListNumber, createdAt, rows: assigned, exceptions: prepared.exceptions, succeeded: [], failed: [], metadata: { sourceFile: cleanText(input.sourceFile).slice(0, 256), totalSourceRows: Math.max(rows.length, Math.min(1000000, Number(input.totalSourceRows) || rows.length)), exceptionCount: prepared.exceptions.length } };
       // Reserve before external writes. Uncertain outcomes remain blocked rather than creating another PL.

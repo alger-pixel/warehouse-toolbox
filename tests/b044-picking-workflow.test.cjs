@@ -671,10 +671,10 @@ test('unacknowledged PART USED never clears the pending commanded unit, even wit
  h.window.MkiteB044Picking.complete=complete;await h.tool.processScan('TRACK1');assert.ok(row.completedAt);assert.equal(h.tool.getState().temporaryParts,null);
 });
 
-for (const terminal of ['completed','cancelled']) test(`${terminal} PL starts a clean local session without writes`,async()=>{
+for (const terminal of ['completed','cancelled','reconciled']) test(`${terminal} PL starts a clean local session without writes`,async()=>{
  const h=setup(),s=h.tool.getState(),row=s.pl.packages[0];
  row.commandRaw='补说明书';row.printCount=2;s.commandCache=[['command',{}]];s.temporaryParts={parts:[{sku:'MANUAL',quantity:1}]};s.creationRequestId='old-request';s.workflowError='old banner';
- if(terminal==='completed')row.completedAt='2026-09-10';else{s.pl.phase='cancelled';s.pl.operational=false;}
+ if(terminal==='completed')row.completedAt='2026-09-10';else{s.pl.phase=terminal;s.pl.operational=false;}
  const historical=structuredClone(s.pl),removals=[];const remove=h.context.storage.remove;h.context.storage.remove=key=>{removals.push(key);remove(key);};
  h.tool.closeScanMode();assert.match(h.root.innerHTML,/START NEW PICKING LIST/);
  if(terminal==='completed'){h.tool.openScanMode();assert.match(h.root.innerHTML,/START NEW PICKING LIST/);}

@@ -34,6 +34,20 @@ test('production-shaped requests still fail closed when the deployment-only auth
  assert.equal(response.status,403);assert.equal((await response.json()).error.code,'LOCAL_PRODUCTION_MUTATION_BLOCKED');
 });
 
+test('local test target permits only B044 mutations and cannot be activated by request headers',async()=>{
+ let called=false;const binding={idFromName:name=>name,get:()=>({fetch:async()=>{called=true;return Response.json({ok:true,data:{phase:'operational'}});}})},local={...configured,FEISHU_DATA_ENVIRONMENT:'local-test',WORKER_RUNTIME_ENVIRONMENT:'development',B044_LOCAL_TEST_DATA:'enabled',B044_PUT_AWAY:binding};
+ assert.equal((await handleRequest(request('/api/b044/put-away/create-picking-list'),local)).status,200);assert.equal(called,true);
+ const other=await handleRequest(request('/api/receiving'),local);assert.equal(other.status,403);assert.equal((await other.json()).error.code,'LOCAL_PRODUCTION_MUTATION_BLOCKED');
+ const headerRequest=request('/api/b044/put-away/create-picking-list');headerRequest.headers.set('X-B044-Local-Test-Data','enabled');
+ const blocked=await handleRequest(headerRequest,configured);assert.equal(blocked.status,403);assert.equal((await blocked.json()).error.code,'LOCAL_PRODUCTION_MUTATION_BLOCKED');
+});
+
+test('production runtime cannot activate B044 local test data mode',async()=>{
+ let called=false;const env={...configured,FEISHU_DATA_ENVIRONMENT:'local-test',WORKER_RUNTIME_ENVIRONMENT:'production',B044_LOCAL_TEST_DATA:'enabled',B044_PUT_AWAY:{idFromName:name=>name,get:()=>({fetch:async()=>{called=true;return Response.json({ok:true});}})}};
+ const response=await handleRequest(productionRequest('/api/b044/put-away/create-picking-list'),env),payload=await response.json();
+ assert.equal(response.status,403);assert.equal(payload.error.code,'LOCAL_PRODUCTION_MUTATION_BLOCKED');assert.equal(called,false);
+});
+
 test('mutation classification covers shared operational writers and retains explicit read-only POST routes',()=>{
  for(const route of ['b044-create','b044-cancel','b044-reconcile-execute','tineco-begin','receive','location-move','client-create','users-create','sops-create','part-used-report-create'])assert.equal(isMutationRequest(route,null,'POST'),true,route);
  for(const route of ['b044-prepare','b044-recover','b044-reconcile','b044-reconcile-diagnose','picking-search','inventory-lookup','tineco-inventory','users-list'])assert.equal(isMutationRequest(route,null,'POST'),false,route);

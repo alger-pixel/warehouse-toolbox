@@ -358,8 +358,26 @@ test('successful completion releases its active reservation and retry repairs a 
   await assert.rejects(f.service().complete(input));assert.equal(f.data.get('rec-A').fields.STATUS,'Processed');assert.ok(f.memory.get(`job:${f.input.requestId}`).rows[0].completedAt);assert.equal(f.memory.get('reserved:rec-A'),f.input.requestId);
   await f.service().complete(input);assert.equal(f.memory.has('reserved:rec-A'),false);
   await assert.rejects(f.service().create({...f.input,requestId:'future-completed-12345'}),error=>error.code==='NO_ELIGIBLE_PACKAGES');
-  f.data.get('rec-A').fields.STATUS='Active';const prepared=await f.service().prepare({rows:f.input.rows});assert.equal(prepared.packages[0].eligibility,'BLOCKED_HISTORY');assert.match(prepared.packages[0].reason,/HISTORICAL B044 COMPLETION/);
-  await assert.rejects(f.service().create({...f.input,requestId:'manually-active-12345'}),error=>error.code==='NO_ELIGIBLE_PACKAGES');
+  f.data.get('rec-A').fields.STATUS='Active';const prepared=await f.service().prepare({rows:f.input.rows});assert.equal(prepared.packages[0].eligibility,'ELIGIBLE');
+  assert.equal((await f.service().create({...f.input,requestId:'manually-active-12345'})).operational,true);
+});
+
+test('new generation uses current Active status regardless of historical B044 lifecycle notes', async () => {
+  const histories = [
+    'old history',
+    '2026/09/01 10:00 - B044 SCAN PUT AWAY TOOL: PL NUMBER: B044-PL-OLD-0001 - CREATED',
+    '2026/09/01 10:00 - B044 SCAN PUT AWAY TOOL: PL NUMBER: B044-PL-OLD-0001 - CANCELLED',
+    '2026/09/01 10:00 - B044 SCAN PUT AWAY TOOL: PL NUMBER: B044-PL-OLD-0001 - DONE PUTTING AWAY',
+    'STATUS: PARTIALLY COMPLETED / RECONCILED',
+    '2026/09/01 10:00 - B044 SCAN PUT AWAY TOOL: PL NUMBER: B044-PL-OLD-0001 - DONE PUTTING AWAY\n2026/09/02 10:00 - B044 SCAN PUT AWAY TOOL: PL NUMBER: B044-PL-OLD-0002 - CREATED\n2026/09/03 10:00 - B044 SCAN PUT AWAY TOOL: PL NUMBER: B044-PL-OLD-0003 - CANCELLED'
+  ];
+  for (const [index, note] of histories.entries()) {
+    const record = packageRecord(`H${index}`); record.fields.NOTE = note;
+    const f = fixture([record]);
+    const prepared = await f.service().prepare(f.input);
+    assert.equal(prepared.eligible.length, 1, note);
+    assert.equal(prepared.packages[0].eligibility, 'ELIGIBLE', note);
+  }
 });
 test('cancellation cannot finish with a stale reservation and retry releases a checkpointed package', async () => {
   const f = fixture(), pl = await f.service().create(f.input), remove = f.storage.delete; let failOnce = true;

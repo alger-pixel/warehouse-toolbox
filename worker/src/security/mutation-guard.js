@@ -32,5 +32,8 @@ export function productionMutationAllowed(request, env) {
 }
 
 export function shouldBlockProductionMutation(request, env, route, routeMatch) {
-  return isMutationRequest(route, routeMatch, request.method) && !productionMutationAllowed(request, env);
+  if (!isMutationRequest(route, routeMatch, request.method)) return false;
+  if (env.FEISHU_DATA_ENVIRONMENT === 'local-test') return !(isB044LocalTestMode(env) && route.startsWith('b044-'));
+  return !productionMutationAllowed(request, env);
 }
+import { isB044LocalTestMode } from '../modules/b044-put-away/local-test-data.js';
