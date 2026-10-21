@@ -31,34 +31,43 @@
     const pad = (value) => String(value).padStart(2, "0");
     return { date: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`, time: `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`, hm: `${pad(date.getHours())}${pad(date.getMinutes())}` };
   }
-  function uniqueSummary(history, knownValues) {
-    const rows = new Map();
+  function scanTimestamp(item) {
+    const eventDate = item.timestamp ? new Date(item.timestamp) : null;
+    if (eventDate && !Number.isNaN(eventDate.getTime())) { const parts = localDateParts(eventDate); return `${parts.date} ${parts.time}`; }
+    return item.time || "";
+  }
+  function summaryRows(history, knownValues) {
+    const recognized = new Map(Array.from(knownValues.keys(), (key) => [key, []]));
     history.slice().reverse().forEach((item) => {
-      const key = normalize(item.input); if (!key) return;
-      if (!rows.has(key)) rows.set(key, { input: knownValues.get(key) || String(item.input).trim(), total: 0, matched: 0, duplicate: 0, failed: 0 });
-      const row = rows.get(key); row.total += 1;
-      if (item.status === STATUS.MATCHED) row.matched += 1; else if (item.status === STATUS.DUPLICATE) row.duplicate += 1; else if (item.status === STATUS.FAILED) row.failed += 1;
+      const key = normalize(item.input);
+      if (recognized.has(key) && (item.status === STATUS.MATCHED || item.status === STATUS.DUPLICATE)) recognized.get(key).push(scanTimestamp(item));
     });
-    return Array.from(rows.values());
+    return Array.from(knownValues, ([key, display]) => {
+      const times = recognized.get(key); const count = times.length;
+      return { knownItem: display, status: count === 0 ? "NOT FOUND" : count === 1 ? "MATCHED" : "MULTIPLE SCAN", scanCount: count, firstScanned: times[0] || "", lastScanned: times.at(-1) || "", scanTimes: times.join(" / ") };
+    });
   }
   function exportRows(state, knownValues, now) {
-    const chronological = state.history.slice().reverse(); const unique = uniqueSummary(state.history, knownValues); const parts = localDateParts(now);
-    const historyRows = chronological.map((item) => {
-      const eventDate = item.timestamp ? new Date(item.timestamp) : null; const validDate = eventDate && !Number.isNaN(eventDate.getTime()) ? localDateParts(eventDate) : { date: "", time: item.time || "" };
-      return [Number(item.number) || "", item.input, item.status, validDate.date, validDate.time];
-    });
+    const chronological = state.history.slice().reverse(); const detail = summaryRows(state.history, knownValues); const parts = localDateParts(now);
+    const counts = detail.reduce((result, row) => { if (row.status === "MATCHED") result.matched += 1; else if (row.status === "MULTIPLE SCAN") result.multiple += 1; else result.notFound += 1; return result; }, { matched: 0, multiple: 0, notFound: 0 });
     return {
-      history: [["Sequence", "Input", "Status", "Date", "Time"], ...historyRows],
-      unique: [["Input", "Total Scans", "Matched", "Already Scanned", "Failed Matching"], ...unique.map((row) => [row.input, row.total, row.matched, row.duplicate, row.failed])],
-      summary: [["Metric", "Value"], ["Known Items", knownValues.size], ["Total Scans", state.counters.total], ["Matched", state.counters.matched], ["Already Scanned", state.counters.duplicate], ["Failed", state.counters.failed], ["Unique Scanned Values", unique.length], ["Export Date", parts.date], ["Export Time", parts.time]],
+      history: [["SEQUENCE", "SCANNED VALUE", "STATUS", "SCANNED TIME"], ...chronological.map((item) => [Number(item.number) || "", String(item.input), item.status, scanTimestamp(item)])],
+      summary: [["TOTAL KNOWN ITEMS", knownValues.size], ["MATCHED", counts.matched], ["MULTIPLE SCAN", counts.multiple], ["NOT FOUND", counts.notFound], ["TOTAL SCANS", state.history.length], ["FAILED SCANS", state.history.filter((item) => item.status === STATUS.FAILED).length], [], ["KNOWN ITEM", "STATUS", "SCAN COUNT", "FIRST SCANNED", "LAST SCANNED", "SCAN TIMES"], ...detail.map((row) => [row.knownItem, row.status, row.scanCount, row.firstScanned, row.lastScanned, row.scanTimes])],
       filename: `MKITE-Matching-${parts.date}-${parts.hm}.xlsx`
     };
+  }
+  function buildWorkbook(XLSX, state, knownValues, now) {
+    const data = exportRows(state, knownValues, now); const workbook = XLSX.utils.book_new();
+    const historySheet = XLSX.utils.aoa_to_sheet(data.history); historySheet["!cols"] = [{ wch: 11 }, { wch: 34 }, { wch: 20 }, { wch: 22 }]; historySheet["!autofilter"] = { ref: `A1:D${Math.max(1, data.history.length)}` };
+    const summarySheet = XLSX.utils.aoa_to_sheet(data.summary); summarySheet["!cols"] = [{ wch: 34 }, { wch: 18 }, { wch: 12 }, { wch: 22 }, { wch: 22 }, { wch: 64 }]; summarySheet["!autofilter"] = { ref: `A8:F${Math.max(8, data.summary.length)}` };
+    XLSX.utils.book_append_sheet(workbook, historySheet, "SCAN HISTORY"); XLSX.utils.book_append_sheet(workbook, summarySheet, "SUMMARY");
+    return { workbook, filename: data.filename };
   }
 
   window.MkiteTools.matching = {
     render() {
       return `<div class="matching-workspace tool-page workspace-stack" id="matching-workspace" data-tool-theme="matching">
-        <div class="page-header matching-page-header tool-hero"><div><span class="tool-kicker">Validation tool</span><h2>Matching</h2><p>Validate scanned values against a known list.</p></div><div class="matching-header-actions tool-actions"><button class="button button-primary tool-primary-action" type="button" data-tool-action="start-scan-mode">START SCAN MODE</button><button class="button button-secondary tool-secondary-action" type="button" data-tool-action="export">EXPORT EXCEL</button></div></div>
+        <div class="page-header matching-page-header tool-hero"><div><span class="tool-kicker">Validation tool</span><h2>Matching</h2><p>Validate scanned values against a known list.</p></div><div class="matching-header-actions tool-actions"><button class="button button-primary tool-primary-action" type="button" data-tool-action="start-scan-mode">START SCAN MODE</button><button class="button button-secondary tool-secondary-action" type="button" data-tool-action="export">EXPORT EXCEL</button><button class="button matching-clean-reset-action" type="button" data-tool-action="open-clean-reset">CLEAN RESET</button></div></div>
         <div class="stats-grid matching-stats tool-overview" aria-label="Matching statistics">
           <div class="stat tool-stat"><span class="stat-label">Known Items</span><strong class="stat-value" data-stat="known">0</strong></div><div class="stat tool-stat"><span class="stat-label">Total Scans</span><strong class="stat-value" data-stat="total">0</strong></div><div class="stat tool-stat"><span class="stat-label">Matched</span><strong class="stat-value" data-stat="matched">0</strong></div><div class="stat tool-stat"><span class="stat-label">Already Scanned</span><strong class="stat-value" data-stat="duplicate">0</strong></div><div class="stat tool-stat"><span class="stat-label">Failed</span><strong class="stat-value" data-stat="failed">0</strong></div>
         </div>
@@ -72,17 +81,18 @@
           <div class="scan-mode-stats" aria-label="Scan Mode statistics"><span>KNOWN <strong data-stat="known">0</strong></span><span>TOTAL <strong data-stat="total">0</strong></span><span>MATCHED <strong data-stat="matched">0</strong></span><span>DUPLICATES <strong data-stat="duplicate">0</strong></span><span>FAILED <strong data-stat="failed">0</strong></span></div>
           <main class="scan-mode-content"><div class="scan-mode-status" role="status" aria-live="assertive" aria-atomic="true"><strong data-scan-mode-title>READY TO SCAN</strong><span data-scan-mode-value>Scan or enter a value</span></div><div class="scan-mode-entry"><label for="scan-mode-input">Scan or enter a value</label><div><input class="scan-mode-input" id="scan-mode-input" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="button scan-mode-check" type="button" data-tool-action="scan-mode-check">CHECK</button></div></div><button class="button scan-mode-unlock" type="button" data-tool-action="scan-mode-unlock" hidden>ACKNOWLEDGE &amp; UNLOCK</button></main>
         </section>
+        <dialog class="matching-reset-dialog" data-clean-reset-dialog aria-labelledby="matching-clean-reset-title"><form method="dialog"><span class="matching-reset-kicker">DESTRUCTIVE ACTION</span><h3 id="matching-clean-reset-title">CLEAN RESET MATCHING TOOL?</h3><p>This will remove the Known List, scan history, counters, and current Matching session.</p><div class="matching-reset-actions"><button class="button button-neutral" type="button" data-tool-action="cancel-clean-reset">CANCEL</button><button class="button matching-clean-reset-confirm" type="button" data-tool-action="confirm-clean-reset">CLEAN RESET</button></div></form></dialog>
       </div>`;
     },
 
     init(context) {
       this.context = context; this.root = context.root; this.state = validSession(context.storage.get(SESSION_KEY, null)); this.knownValues = uniqueKnown(this.state.knownText); this.scannedValues = new Set(this.state.scannedValues); this.scanModeActive = false; this.scanModeBusy = false; this.resultTimer = null;
       this.elements = {
-        workspace: this.root.querySelector("#matching-workspace"), known: this.root.querySelector("#known-box"), scan: this.root.querySelector("#matching-scan"), check: this.root.querySelector('[data-tool-action="check"]'), unlock: this.root.querySelector('[data-tool-action="unlock"]'), lock: this.root.querySelector("[data-matching-lock]"), status: this.root.querySelector("[data-matching-status]"), historyBody: this.root.querySelector("[data-history-body]"), historyTable: this.root.querySelector("[data-history-table]"), historyEmpty: this.root.querySelector("[data-history-empty]"), scanMode: this.root.querySelector("[data-scan-mode]"), scanModeInput: this.root.querySelector("#scan-mode-input"), scanModeCheck: this.root.querySelector('[data-tool-action="scan-mode-check"]'), scanModeTitle: this.root.querySelector("[data-scan-mode-title]"), scanModeValue: this.root.querySelector("[data-scan-mode-value]"), scanModeUnlock: this.root.querySelector('[data-tool-action="scan-mode-unlock"]')
+        workspace: this.root.querySelector("#matching-workspace"), known: this.root.querySelector("#known-box"), scan: this.root.querySelector("#matching-scan"), check: this.root.querySelector('[data-tool-action="check"]'), unlock: this.root.querySelector('[data-tool-action="unlock"]'), lock: this.root.querySelector("[data-matching-lock]"), status: this.root.querySelector("[data-matching-status]"), historyBody: this.root.querySelector("[data-history-body]"), historyTable: this.root.querySelector("[data-history-table]"), historyEmpty: this.root.querySelector("[data-history-empty]"), scanMode: this.root.querySelector("[data-scan-mode]"), scanModeInput: this.root.querySelector("#scan-mode-input"), scanModeCheck: this.root.querySelector('[data-tool-action="scan-mode-check"]'), scanModeTitle: this.root.querySelector("[data-scan-mode-title]"), scanModeValue: this.root.querySelector("[data-scan-mode-value]"), scanModeUnlock: this.root.querySelector('[data-tool-action="scan-mode-unlock"]'), cleanResetDialog: this.root.querySelector("[data-clean-reset-dialog]")
       };
-      this.handlers = { knownInput: () => this.handleKnownChange(), setupKeydown: (event) => this.handleScanKey(event, false), modeKeydown: (event) => this.handleScanKey(event, true), check: () => this.processScan(false), modeCheck: () => this.processScan(true), unlock: () => this.unlock(), reset: () => this.reset(), clearKnown: () => this.clearKnown(), startMode: () => this.startScanMode(), exitMode: () => this.exitScanMode(), export: () => this.exportExcel() };
+      this.handlers = { knownInput: () => this.handleKnownChange(), setupKeydown: (event) => this.handleScanKey(event, false), modeKeydown: (event) => this.handleScanKey(event, true), check: () => this.processScan(false), modeCheck: () => this.processScan(true), unlock: () => this.unlock(), reset: () => this.reset(), clearKnown: () => this.clearKnown(), startMode: () => this.startScanMode(), exitMode: () => this.exitScanMode(), export: () => this.exportExcel(), openCleanReset: () => this.openCleanReset(), cancelCleanReset: () => this.closeCleanReset(), confirmCleanReset: () => this.cleanReset() };
       this.elements.known.value = this.state.knownText; this.elements.known.addEventListener("input", this.handlers.knownInput); this.elements.scan.addEventListener("keydown", this.handlers.setupKeydown); this.elements.scanModeInput.addEventListener("keydown", this.handlers.modeKeydown); this.elements.check.addEventListener("click", this.handlers.check); this.elements.scanModeCheck.addEventListener("click", this.handlers.modeCheck); this.elements.unlock.addEventListener("click", this.handlers.unlock); this.elements.scanModeUnlock.addEventListener("click", this.handlers.unlock);
-      const actions = { reset: this.handlers.reset, "clear-known": this.handlers.clearKnown, "start-scan-mode": this.handlers.startMode, "exit-scan-mode": this.handlers.exitMode, export: this.handlers.export };
+      const actions = { reset: this.handlers.reset, "clear-known": this.handlers.clearKnown, "start-scan-mode": this.handlers.startMode, "exit-scan-mode": this.handlers.exitMode, export: this.handlers.export, "open-clean-reset": this.handlers.openCleanReset, "cancel-clean-reset": this.handlers.cancelCleanReset, "confirm-clean-reset": this.handlers.confirmCleanReset };
       Object.entries(actions).forEach(([name, handler]) => this.root.querySelector(`[data-tool-action="${name}"]`).addEventListener("click", handler));
       this.renderStatistics(); this.renderHistory();
       if (this.state.locked) { this.elements.scan.value = this.state.lastFailed; this.setSetupStatus(STATUS.FAILED, this.state.lastFailed); this.setLocked(true); } else { this.setSetupStatus(STATUS.READY, "Waiting for input"); this.deferFocus(false); }
@@ -144,16 +154,19 @@
       const knownText = this.elements.known.value; this.state = blankSession(knownText); this.scannedValues = new Set(); this.elements.scan.value = ""; this.setLocked(false); this.setSetupStatus(STATUS.READY, "Waiting for input"); this.renderStatistics(); this.renderHistory(); this.saveSession(); this.context.toast.show("Matching session reset"); this.deferFocus(false);
     },
     clearKnown() { if (!this.elements.known.value.trim()) return; if (!window.confirm("Clear the Known Box?\nThis cannot be undone.")) return; this.elements.known.value = ""; this.state.knownText = ""; this.knownValues = new Map(); this.renderStatistics(); this.saveSession(); this.context.toast.show("Known Box cleared"); },
+    openCleanReset() { this.elements.cleanResetDialog.showModal(); },
+    closeCleanReset() { this.elements.cleanResetDialog.close(); },
+    cleanReset() {
+      this.closeCleanReset(); this.clearResultTimer(); this.scanModeActive = false; this.scanModeBusy = false; document.body.classList.remove("matching-scan-mode-active");
+      this.state = blankSession(""); this.knownValues = new Map(); this.scannedValues = new Set(); this.elements.known.value = ""; this.elements.scan.value = ""; this.elements.scanModeInput.value = ""; this.elements.scanMode.hidden = true;
+      this.setLocked(false); this.setSetupStatus(STATUS.READY, "Waiting for input"); this.setScanModeStatus(STATUS.READY, "Scan or enter a value"); this.renderStatistics(); this.renderHistory(); this.context.storage.remove(SESSION_KEY); this.context.toast.show("Matching tool clean reset"); this.deferFocus(false);
+    },
 
     exportExcel() {
-      if (!this.state.history.length) { this.context.toast.show("No scan history to export."); return false; }
+      if (!this.state.history.length && !this.knownValues.size) { this.context.toast.show("No Matching data to export."); return false; }
       if (!window.XLSX) { this.context.toast.show("Excel export is unavailable."); return false; }
       try {
-        const data = exportRows(this.state, this.knownValues, new Date()); const workbook = window.XLSX.utils.book_new();
-        const historySheet = window.XLSX.utils.aoa_to_sheet(data.history); historySheet["!cols"] = [{ wch: 11 }, { wch: 28 }, { wch: 20 }, { wch: 13 }, { wch: 12 }];
-        const uniqueSheet = window.XLSX.utils.aoa_to_sheet(data.unique); uniqueSheet["!cols"] = [{ wch: 28 }, { wch: 13 }, { wch: 11 }, { wch: 18 }, { wch: 18 }];
-        const summarySheet = window.XLSX.utils.aoa_to_sheet(data.summary); summarySheet["!cols"] = [{ wch: 24 }, { wch: 22 }];
-        window.XLSX.utils.book_append_sheet(workbook, historySheet, "Scan History"); window.XLSX.utils.book_append_sheet(workbook, uniqueSheet, "Unique Summary"); window.XLSX.utils.book_append_sheet(workbook, summarySheet, "Session Summary"); window.XLSX.writeFile(workbook, data.filename, { compression: true }); this.context.toast.show("Excel workbook exported"); return true;
+        const artifact = buildWorkbook(window.XLSX, this.state, this.knownValues, new Date()); window.XLSX.writeFile(artifact.workbook, artifact.filename, { compression: true }); this.context.toast.show("Excel workbook exported"); return true;
       } catch (error) { this.context.toast.show("Excel export failed."); return false; }
     },
 
@@ -164,6 +177,6 @@
     saveSession() { this.context.storage.set(SESSION_KEY, this.state); }, restoreSession() { return this.context ? this.context.storage.get(SESSION_KEY, null) : null; },
     cleanup() { this.clearResultTimer(); document.body.classList.remove("matching-scan-mode-active"); if (this.context && this.context.audio) this.context.audio.cancelSpeech(); this.context = null; this.root = null; this.elements = null; this.handlers = null; },
 
-    test: { normalize, uniqueKnown, decide, uniqueSummary, exportRows, blankSession, validSession, STATUS }
+    test: { normalize, uniqueKnown, decide, summaryRows, exportRows, buildWorkbook, blankSession, validSession, STATUS, SESSION_KEY }
   };
 }(window));
