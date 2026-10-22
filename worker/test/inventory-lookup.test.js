@@ -6,7 +6,7 @@ import { handleRequest } from '../src/index.js';
 const env = { MKITE_WAREHOUSE_API_KEY: 'mock-worker-secret', ALLOWED_ORIGINS: 'http://localhost:5501' };
 const item = (id, warehouseCode = 'MKS66') => ({ inventoryId:id, locationCode:'LOCATION-'+id, warehouseId:53, warehouseCode, productId:85530, availableQuantity:'1', lockedQuantity:'0', inventoryQuantity:'4', sourceFields:{secret:'private'}, preferredLocation:'untrusted' });
 const pageResponse = (items, total=items.length, page=1) => Response.json({code:0,message:'success',data:{page,pageSize:200,total,items}});
-const service = fetchImpl => createWarehouseInventoryLookupService(env,{fetchImpl});
+const service = fetchImpl => createWarehouseInventoryLookupService(env,{fetchImpl,sleep:async()=>{},random:()=>.5});
 test('SKU and env secret sent only upstream; allowlisted rows retain order and numeric quantities',async()=>{
  const rows=[item(2),item(1,'OTHER'),item(3)];let calls=0;
  const result=await service(async(url,init)=>{calls++;assert.equal(url,DEFAULT_API_URL);assert.equal(init.method,'POST');assert.equal(init.redirect,'manual');assert.equal(init.headers['X-API-Key'],env.MKITE_WAREHOUSE_API_KEY);assert.deepEqual(JSON.parse(init.body),{product_sku:'AbC /+_-.* 123',page:1,pageSize:200});return pageResponse(rows);}).lookup({sku:'  AbC /+_-.* 123  '});
@@ -40,8 +40,10 @@ for(const [status,code] of [[401,'WAREHOUSE_API_UNAUTHORIZED'],[429,'WAREHOUSE_A
  await assert.rejects(service(async()=>new Response(env.MKITE_WAREHOUSE_API_KEY,{status})).lookup({sku:'X'}),e=>e.code===code&&!e.message.includes(env.MKITE_WAREHOUSE_API_KEY));
 });
 test('network failure sanitized',async()=>{await assert.rejects(service(async()=>{throw Error(env.MKITE_WAREHOUSE_API_KEY);}).lookup({sku:'X'}),e=>e.code==='WAREHOUSE_API_UNAVAILABLE'&&!e.message.includes(env.MKITE_WAREHOUSE_API_KEY));});
+test('transient location failure retries and recovers with safe diagnostics',async()=>{let calls=0,diagnostic;const result=await createWarehouseInventoryLookupService(env,{sleep:async()=>{},random:()=>.5,onDiagnostic:value=>{diagnostic=value;},fetchImpl:async()=>++calls===1?new Response('',{status:429,headers:{'Retry-After':'99'}}):pageResponse([item(1)])}).lookup({sku:'X'});assert.equal(calls,2);assert.equal(result.total,1);assert.deepEqual(diagnostic,{outcome:'success',retries:1});});
+test('permanent location failures are not retried',async()=>{for(const status of [400,401,403]){let calls=0;await assert.rejects(service(async()=>{calls++;return new Response('',{status});}).lookup({sku:'X'}));assert.equal(calls,1);}});
 for(const bodyDelay of [false,true])test(`timeout covers ${bodyDelay?'body parsing':'fetch'} and aborts`,async()=>{
- let signal;const client=createWarehouseInventoryLookupService(env,{timeoutMs:5,fetchImpl:async(url,init)=>{signal=init.signal;return bodyDelay?{ok:true,json:()=>new Promise(()=>{})}:new Promise(()=>{});}});
+ let signal;const client=createWarehouseInventoryLookupService(env,{timeoutMs:5,sleep:async()=>{},fetchImpl:async(url,init)=>{signal=init.signal;return bodyDelay?{ok:true,json:()=>new Promise(()=>{})}:new Promise(()=>{});}});
  await assert.rejects(client.lookup({sku:'X'}),e=>e.code==='WAREHOUSE_API_TIMEOUT');assert.equal(signal.aborted,true);
 });
 for(const [body,code] of [['not JSON','WAREHOUSE_API_INVALID_RESPONSE'],[{code:9,message:env.MKITE_WAREHOUSE_API_KEY},'WAREHOUSE_API_FAILED'],[{code:0,data:{items:{}}},'WAREHOUSE_API_INVALID_RESPONSE'],[{code:0,data:{page:1,pageSize:200,total:1,items:[null]}},'WAREHOUSE_API_INVALID_RESPONSE']])test(`invalid upstream ${JSON.stringify(body)}`,async()=>{

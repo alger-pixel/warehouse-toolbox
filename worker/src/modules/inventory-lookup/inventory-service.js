@@ -33,7 +33,8 @@ export function createWarehouseInventoryLookupService(env, options = {}) {
   } };
 }
 export async function handleInventoryLookup(input, env, id, request) {
-  try { return json(await createWarehouseInventoryLookupService(env).lookup(input), 200, request, env); }
+  const onDiagnostic = diagnostic => console.warn(JSON.stringify({ requestId:id, route:'inventory-lookup-upstream', ...diagnostic }));
+  try { return json(await createWarehouseInventoryLookupService(env,{onDiagnostic}).lookup(input), 200, request, env); }
   catch (error) {
     const known = error instanceof WarehouseLookupError;
     return errorResponse(known ? error.status : 502, known ? error.code : 'WAREHOUSE_API_FAILED', known ? error.message : 'Warehouse inventory request failed.', known ? error.retryable : false, id, request, env);

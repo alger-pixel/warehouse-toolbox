@@ -10,6 +10,7 @@ import { handleUsers } from './modules/users/user-controller.js';
 export { UserManagementCoordinator } from './modules/users/user-coordinator.js';
 import { handleCommandSimplifier } from './modules/ai/command-simplifier-controller.js';
 import { createTinecoInventoryService, handleTinecoInventory } from './modules/tineco-inventory/inventory-service.js';
+import { createTinecoSnEnrichmentService } from './modules/tineco-inventory/sn-enrichment-service.js';
 import { handleTineco } from './modules/tineco-toc/tineco-controller.js';
 export { TinecoTocCoordinator } from './modules/tineco-toc/tineco-coordinator.js';
 import { createInventoryService } from './modules/inventory/inventory-service.js';
@@ -87,7 +88,7 @@ export async function handleRequest(request, env) {
     if(route.startsWith('sops-'))response=await handleSops(route,{...parsed.body,sopId:routeMatch.sopId,assetId:routeMatch.assetId},createSopService(config,records,createFeishuAttachmentService(auth)),id,request,env);
     else if(route.startsWith('safety-icons-'))response=await handleSafetyIcons(route,{...parsed.body,recordId:routeMatch.recordId},createSafetyIconService(config,records,createFeishuAttachmentService(auth)),id,request,env);
     else if (route.startsWith("picking-")) response = await handlePickingSearch(route.slice(8), createPickingSearchService(config, records), parsed.body, id, request, env);
-    else if (route === "tineco-inventory") response = await handleTinecoInventory(createTinecoInventoryService(config, records), parsed.body, id, request, env);
+    else if (route === "tineco-inventory") response = await handleTinecoInventory(createTinecoInventoryService(config, records, createTinecoSnEnrichmentService(env,{onDiagnostic:diagnostic=>console.log(JSON.stringify({requestId:id,route:'tineco-sn-enrichment',...diagnostic}))})), parsed.body, id, request, env);
     else if (route.startsWith("tineco-")) response = await handleTineco(route.slice(7), parsed.body, config, request, env, id);
     else if (route === "inventory-search") response = await createInventoryController(createInventoryService(config, records)).search(parsed.body, id, request, env);
     else if (route.startsWith("b044-")) response = await handleB044(route, parsed.body, config, records, id, request, env);

@@ -17,7 +17,7 @@ function dateKey(v, timeZone) {
   return ['year','month','day'].map(k=>parts.find(p=>p.type===k).value).join('-');
 }
 function dateTime(v,timeZone){if(v==null||v==='')return '';const d=new Date(typeof v==='string'&&/^\d+$/.test(v)?Number(v):v);if(!Number.isFinite(d.getTime()))return '';const parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d),get=k=>parts.find(p=>p.type===k)?.value||'';return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;}
-export function createTinecoInventoryService(config, records) {
+export function createTinecoInventoryService(config, records, snEnrichment = null) {
   return {async search(input={}) {
     if(!input||typeof input!=='object'||Array.isArray(input))throw new SearchError('Provide inventory filters.');
     if(!config.tinecoTocUnitTableId)throw new SearchError('TINECO TOC inventory table is not configured.');
@@ -43,7 +43,9 @@ export function createTinecoInventoryService(config, records) {
     for(const r of filtered){const status=r['CLIENT STATUS'];if(['Pending','Completed','Disposal'].includes(status))summary[status.toLowerCase()]++;const n=Number(r['LABOR MINUTES']);if(Number.isFinite(n))summary.totalLaborMinutes+=n;}
     if(input.export===true&&filtered.length>EXPORT_LIMIT)throw new SearchError(`Export is limited to ${EXPORT_LIMIT} filtered records. Narrow your filters; no partial workbook was exported.`);
     const totalPages=Math.max(1,Math.ceil(filtered.length/50)),page=Math.min(requested,totalPages);
-    return {query,options,summary,exportLimit:EXPORT_LIMIT,columns:COLUMNS,results:input.export===true?filtered:filtered.slice((page-1)*50,page*50),pagination:{page,pageSize:50,totalMatched:filtered.length,totalPages,hasPrevious:page>1,hasNext:page<totalPages}};
+    const results=input.export===true?filtered:filtered.slice((page-1)*50,page*50);
+    if(input.export!==true&&snEnrichment){const {enrichment}=await snEnrichment.enrich(results);for(const row of results){const extra=enrichment.get(text(row.SN))||{status:'NO_MATCH',model:null,icssStatus:null};row.model=extra.model;row.icssStatus=extra.icssStatus;row.snEnrichmentStatus=extra.status;row.modelEnrichmentStatus=extra.modelStatus||extra.status;row.icssEnrichmentStatus=extra.icssStatusStatus||extra.status;}}
+    return {query,options,summary,exportLimit:EXPORT_LIMIT,columns:COLUMNS,results,pagination:{page,pageSize:50,totalMatched:filtered.length,totalPages,hasPrevious:page>1,hasNext:page<totalPages}};
   }};
 }
 export async function handleTinecoInventory(service,input,id,request,env){
