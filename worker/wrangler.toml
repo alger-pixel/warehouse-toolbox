@@ -32,6 +32,7 @@ OPENAI_COMMAND_DIAGNOSTICS = "true"
 # production namespace has been created and its ID has been recorded here.
 [[kv_namespaces]]
 binding = "TINECO_ENRICHMENT_CACHE"
+id = "fc7dc6aec2824201a7f50c7fac45997f"
 [[durable_objects.bindings]]
 name = "B044_PUT_AWAY"
 class_name = "B044PutAwayCoordinator"
