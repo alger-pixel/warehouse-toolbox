@@ -23,6 +23,7 @@
   <link rel="stylesheet" href="css/user-management.css">
   <link rel="stylesheet" href="css/case-category.css?v=case-category-v1">
   <link rel="stylesheet" href="css/projects.css?v=daily-report-quantity-validation-v1">
+  <link rel="stylesheet" href="css/operation-news.css?v=operation-news-m3">
   <link rel="stylesheet" href="css/cases.css?v=case-operations-hub-v1">
   <link rel="stylesheet" href="css/operating-dashboard.css?v=operating-dashboard-v1">
   <link rel="stylesheet" href="css/responsive.css">
@@ -44,7 +45,7 @@
       <nav class="sidebar-nav" aria-label="Application navigation">
         <button class="nav-item is-active" type="button" data-route="operating-dashboard" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18M3 12h18M3 19h18M7 3v18M15 3v18"/><circle cx="11" cy="12" r="2"/></svg><span>Operating Dashboard</span></button>
         <button class="nav-item" type="button" data-route="dashboard"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Production Dashboard</span></button>
-        <button class="nav-item" type="button" data-route="projects" aria-label="Projects and Cases"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5zM8 9h8M8 13h5"/></svg><span>Projects / Cases</span></button>
+        <button class="nav-item" type="button" data-route="projects" aria-label="Projects, Cases, and News"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5zM8 9h8M8 13h5"/></svg><span>Projects / Cases / News</span></button>
         <button class="nav-item" type="button" data-route="in-house-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21v-8h10v8M9 10h6"/></svg><span>In House Tools</span></button>
         <button class="nav-item" type="button" data-route="client-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20v-9l8-4 8 4v9M8 9V5h8v4M8 15h2m4 0h2M12 12v8"/></svg><span>Client Tools</span></button>
         <button class="nav-item" type="button" data-route="tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2"/></svg><span>Assisting Tools</span></button>
@@ -94,9 +95,14 @@
   <script src="js/cases/report-case.js?v=report-case-media-2"></script>
   <script src="js/cases/search-case.js?v=case-search-media-2"></script>
   <script src="js/cases/create-case.js?v=case-category-combobox-v1"></script>
-  <script src="js/operating-dashboard.js?v=operating-dashboard-active-timeline-1"></script>
+  <script src="js/operation-news/dashboard-news.js?v=operation-news-m4"></script>
+  <script src="js/operating-dashboard.js?v=operation-news-m4"></script>
   <script src="js/services/api-config.js?v=local-same-origin-proxy-1"></script>
   <script src="js/services/api-client.js?v=case-media-url-3"></script>
+  <script src="js/operation-news/operation-news-api.js?v=operation-news-m3"></script>
+  <script src="js/operation-news/post-news.js?v=operation-news-m3"></script>
+  <script src="js/operation-news/news-list.js?v=operation-news-m3"></script>
+  <script src="js/operation-news/news-detail.js?v=operation-news-m3"></script>
   <script src="js/in-house-tools/receiving/receiving-service.js"></script>
   <script src="js/in-house-tools/move-location-by-sku/move-location-service.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>

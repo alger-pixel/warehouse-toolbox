@@ -15,6 +15,16 @@ FEISHU_TOOL_TABLE_ID=YOUR_TOOL_TABLE_ID
 FEISHU_TINECO_TOC_UNIT_TABLE_ID=YOUR_TINECO_TOC_UNIT_TABLE_ID
 FEISHU_CASE_CATEGORY_TABLE_ID=YOUR_CASE_CATEGORY_TABLE_ID
 FEISHU_CASE_CLASS_TABLE_ID=YOUR_CASE_CLASS_TABLE_ID
+FEISHU_OPERATION_NEWS_TABLE_ID=YOUR_OPERATION_NEWS_TABLE_ID
+# Reusable controlled Operation News testing; disabled by default. To enable:
+# 1. Use production data + development runtime locally.
+# 2. Set the flag to enabled and configure a random 32-byte lowercase hex secret.
+# 3. Restart port 8787 and verify /api/operation-news/development-status.
+# 4. Test normal valid Operation News values from port 5501, then archive test records.
+# 5. Clear the flag/secret, restart 8787, and verify writes are blocked again.
+# Never copy the local authorization value into this example or wrangler.toml.
+OPERATION_NEWS_LOCAL_E2E=
+OPERATION_NEWS_LOCAL_E2E_AUTHORIZATION=
 FEISHU_SAFETY_ICON_TABLE_ID=YOUR_SAFETY_ICON_TABLE_ID
 FEISHU_SOP_TABLE_ID=YOUR_SOP_TABLE_ID
 FEISHU_PART_USED_TABLE_ID=YOUR_PART_USED_TABLE_ID

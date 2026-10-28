@@ -5,9 +5,10 @@ test('deployment check accepts only the mkite-secure-api Worker configuration',(
  assert.equal(checkWorkerConfig(),'mkite-secure-api');
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mkite-worker-check-')),wrong=path.join(dir,'wrangler.toml');fs.writeFileSync(wrong,'name = "warehouse-toolbox"\n');
  assert.throws(()=>checkWorkerConfig(wrong),/Worker deployment blocked.*mkite-secure-api/);
- const base='name = "mkite-secure-api"\nFEISHU_CASE_CATEGORY_TABLE_ID = "tblCategories"\n';
+ const base='name = "mkite-secure-api"\nFEISHU_CASE_CATEGORY_TABLE_ID = "tblCategories"\nFEISHU_OPERATION_NEWS_TABLE_ID = "tblNews"\n';
  for(const value of ['', 'not-a-table']){fs.writeFileSync(wrong,`${base}FEISHU_USER_TABLE_ID = "${value}"\n`);assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_USER_TABLE_ID/);}
- fs.writeFileSync(wrong,'name = "mkite-secure-api"\nFEISHU_USER_TABLE_ID = "tblUsers"\n');assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_CASE_CATEGORY_TABLE_ID/);
+ fs.writeFileSync(wrong,'name = "mkite-secure-api"\nFEISHU_USER_TABLE_ID = "tblUsers"\nFEISHU_OPERATION_NEWS_TABLE_ID = "tblNews"\n');assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_CASE_CATEGORY_TABLE_ID/);
+ fs.writeFileSync(wrong,'name = "mkite-secure-api"\nFEISHU_USER_TABLE_ID = "tblUsers"\nFEISHU_CASE_CATEGORY_TABLE_ID = "tblCategories"\n');assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_OPERATION_NEWS_TABLE_ID/);
  fs.rmSync(dir,{recursive:true,force:true});
 });
 test('root scripts use explicit Worker config and safe local ports',()=>{

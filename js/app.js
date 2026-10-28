@@ -117,7 +117,8 @@
 
   function renderProjects() {
     const entries=window.MkiteProjectsRegistry.all().filter(entry=>!entry.hidden);
-    mainContent.innerHTML=`<div class="projects-library"><header class="projects-heading"><span>MKITE OPERATIONS</span><h2>Projects / Cases</h2><p>Manage project and Case setup, execution, reporting, and closing.</p></header><div class="section-header"><h3>Project workspaces</h3><span>${entries.length} available</span></div><div class="projects-grid">${entries.map(entry=>`<button class="projects-entry projects-entry--${escapeHtml(entry.theme)}" data-route="${escapeHtml(entry.route)}"${entry.status==='active'?'':' disabled'}>${icons[entry.icon]||icons.count}<div><small>${entry.theme==='cases'?'CASE MANAGEMENT':'PROJECT MANAGEMENT'}</small><strong>${escapeHtml(entry.name)}</strong><p>${escapeHtml(entry.description||'')}</p><em>${escapeHtml(entry.version||'')} · ${entry.status==='active'?'Active':'Coming Soon'}</em></div>${icons.arrow}</button>`).join('')}</div></div>`;
+    const entryHtml=entry=>entry.actions?`<article class="projects-entry projects-entry-card projects-entry--${escapeHtml(entry.theme)}">${icons[entry.icon]||icons.count}<div><small>OPERATION NEWS</small><strong>${escapeHtml(entry.name)}</strong><p>${escapeHtml(entry.description||'')}</p><em>${escapeHtml(entry.version||'')} · ${entry.status==='active'?'Active':'Coming Soon'}</em></div><div class="projects-entry-actions">${entry.actions.map(action=>`<button type="button" class="button ${action.primary?'button-primary':'button-secondary'}" data-route="${escapeHtml(action.route)}">${escapeHtml(action.label)}</button>`).join('')}</div></article>`:`<button class="projects-entry projects-entry--${escapeHtml(entry.theme)}" data-route="${escapeHtml(entry.route)}"${entry.status==='active'?'':' disabled'}>${icons[entry.icon]||icons.count}<div><small>${entry.theme==='cases'?'CASE MANAGEMENT':'PROJECT MANAGEMENT'}</small><strong>${escapeHtml(entry.name)}</strong><p>${escapeHtml(entry.description||'')}</p><em>${escapeHtml(entry.version||'')} · ${entry.status==='active'?'Active':'Coming Soon'}</em></div>${icons.arrow}</button>`;
+    mainContent.innerHTML=`<div class="projects-library"><header class="projects-heading"><span>MKITE OPERATIONS</span><h2>Projects / Cases / News</h2><p>Manage projects, Cases, and important operational updates.</p></header><div class="section-header"><h3>Operational workspaces</h3><span>${entries.length} available</span></div><div class="projects-grid">${entries.map(entryHtml).join('')}</div></div>`;
   }
 
   function renderInHouseTools() {
@@ -245,6 +246,9 @@
     if (route.view === "operating-dashboard") title = "Operating Dashboard";
     else if (route.view === "dashboard") title = "Production Dashboard";
     else if (route.view === "projects/create-report") title = "Create / Report Project";
+    else if (route.view === "operation-news") title = "Operation News";
+    else if (route.view === "operation-news/post") title = "Post Operation News";
+    else if (route.view === "operation-news/detail") title = "Operation News Detail";
     else if (route.view === "cases") title = "Case Operations";
     else if (route.view === "cases/create") title = "Create Case";
     else if (route.view === "cases/report") title = "Report Case";
@@ -259,13 +263,16 @@
     else if (route.view === "client") title = window.MkiteClientRegistry.get(route.clientId)?.name || "Client Tools";
     else title = route.view === "tools" ? "Assisting Tools" : route.view === "client-tools" ? "Client Tools" : route.view === "in-house-tools" ? "In House Tools" : route.view.charAt(0).toUpperCase() + route.view.slice(1);
     sectionTitle.textContent = title; document.title = `${title} | MKITE Warehouse Tools`;
-    const navigationRoute = route.view.startsWith("projects") || route.view.startsWith("cases") ? "projects" : route.view.startsWith("settings/") ? "settings" : route.view === "tool" ? "tools" : route.view === "in-house-tool" ? "in-house-tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
+    const navigationRoute = route.view.startsWith("projects") || route.view.startsWith("cases") || route.view.startsWith("operation-news") ? "projects" : route.view.startsWith("settings/") ? "settings" : route.view === "tool" ? "tools" : route.view === "in-house-tool" ? "in-house-tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
     document.querySelectorAll(".nav-item").forEach((item) => { const active = item.dataset.route === navigationRoute; item.classList.toggle("is-active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
     if (route.view === "operating-dashboard") { activeToolModule=window.MkiteOperatingDashboard; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
     else if (route.view === "dashboard") renderDashboard();
     else if (route.view === "projects") renderProjects();
     else if (route.view === "projects/create-report") { activeToolModule=window.MkiteProjectsWorkspace; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
     else if (route.view === "projects/project") { activeToolModule=window.MkiteProjectLifecycle; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent,projectId:route.projectId}); }
+    else if (route.view === "operation-news") { activeToolModule=window.MkiteNewsList; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
+    else if (route.view === "operation-news/post") { activeToolModule=window.MkitePostNews; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
+    else if (route.view === "operation-news/detail") { activeToolModule=window.MkiteNewsDetail; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent,newsId:route.newsId}); }
     else if (route.view === "cases") { activeToolModule=window.MkiteCaseOperations; mainContent.innerHTML=activeToolModule.renderHub(); }
     else if (route.view === "cases/create") { activeToolModule=window.MkiteCreateCase; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
     else if (route.view === "cases/report") { activeToolModule=window.MkiteReportCase; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }

@@ -37,6 +37,8 @@ test("health is safe and CORS is exact-origin", async () => {
   }
 });
 
+test('Operation News route precedence and method boundaries are enforced before Feishu access',async()=>{for(const [path,method,expected]of [['/api/operation-news/dashboard','POST',405],['/api/operation-news/NEWS-20261026-AAAAAA','PATCH',405],['/api/operation-news/NEWS-20261026-AAAAAA/status','GET',405],['/api/operation-news/NEWS-20261026-AAAAAA','DELETE',405]]){const response=await handleRequest(new Request(`https://api.example${path}`,{method,...(method==='GET'?{}:{body:'{}'})}),env);assert.equal(response.status,expected,`${method} ${path}`);}assert.equal((await handleRequest(new Request('https://api.example/api/operation-news/NEWS-1/extra'),env)).status,404);});
+
 test("preflight and method boundaries are enforced", async () => {
   for (const origin of ALLOWED_ORIGINS) {
     const preflight = await handleRequest(new Request("https://api.example/api/receiving", { method: "OPTIONS", headers: { Origin: origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type" } }), env);

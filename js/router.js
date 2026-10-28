@@ -7,6 +7,10 @@
     const projectMatch=value.match(/^projects\/project\/([^/]+)$/);
     if(projectMatch){try{return {view:"projects/project",projectId:decodeURIComponent(projectMatch[1])};}catch{return {view:"projects"};}}
     if (value === "projects/create-report") return { view: "projects/create-report" };
+    if (value === "operation-news") return { view: "operation-news" };
+    if (value === "operation-news/post") return { view: "operation-news/post" };
+    const newsMatch=value.match(/^operation-news\/([^/]+)$/);
+    if(newsMatch){try{return {view:"operation-news/detail",newsId:decodeURIComponent(newsMatch[1])};}catch{return {view:"operation-news"};}}
     if (value === "cases") return { view: "cases" };
     if (value === "cases/create") return { view: "cases/create" };
     if (value === "cases/report") return { view: "cases/report" };
@@ -30,6 +34,7 @@
   function navigate(route) {
     let hash;
     if (route.view === "projects/project") hash = `#projects/project/${encodeURIComponent(route.projectId)}`;
+    else if (route.view === "operation-news/detail") hash = `#operation-news/${encodeURIComponent(route.newsId)}`;
     else if (route.view === "cases/view") hash = `#cases/view/${encodeURIComponent(route.caseId)}`;
     else if (route.view === "in-house-tool") hash = `#in-house-tool/${route.toolId}`;
     else if (route.view === "client-tool") hash = route.warehouse ? `#client/${route.warehouse}/${route.clientId}/tool/${route.toolId}` : `#client/${route.clientId}/tool/${route.toolId}`;

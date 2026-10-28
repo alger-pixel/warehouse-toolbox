@@ -1,7 +1,7 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const EXPECTED_NAME='mkite-secure-api';
-const REQUIRED_OPERATIONAL_TABLES=['FEISHU_CASE_CATEGORY_TABLE_ID','FEISHU_USER_TABLE_ID'];
+const REQUIRED_OPERATIONAL_TABLES=['FEISHU_CASE_CATEGORY_TABLE_ID','FEISHU_USER_TABLE_ID','FEISHU_OPERATION_NEWS_TABLE_ID'];
 const REQUIRED_RUNTIME_VARS={FEISHU_DATA_ENVIRONMENT:'production',WORKER_RUNTIME_ENVIRONMENT:'production'};
 
 function configuredVar(source,key){

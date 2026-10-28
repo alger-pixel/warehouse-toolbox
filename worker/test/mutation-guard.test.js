@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handleRequest } from '../src/index.js';
-import { isMutationRequest } from '../src/security/mutation-guard.js';
+import { isMutationRequest,shouldBlockProductionMutation } from '../src/security/mutation-guard.js';
 
 const origin='http://127.0.0.1:5501';
 const base={ALLOWED_ORIGINS:origin,FEISHU_DATA_ENVIRONMENT:'production',WORKER_RUNTIME_ENVIRONMENT:'development'};
@@ -10,10 +10,11 @@ const request=(path,body={})=>new Request(`http://127.0.0.1:8787${path}`,{method
 const productionRequest=(path,body={})=>{const value=request(path,body);Object.defineProperty(value,'cf',{value:{colo:'YYZ'}});return value;};
 
 test('local runtime blocks production-data mutation routes before any coordinator runs',async()=>{
- for(const path of ['/api/b044/put-away/create-picking-list','/api/b044/put-away/cancel-picking-list','/api/b044/put-away/reconcile/execute','/api/tineco-toc/begin','/api/receiving','/api/location-move','/api/clients','/api/users/create']){
+ for(const path of ['/api/b044/put-away/create-picking-list','/api/b044/put-away/cancel-picking-list','/api/b044/put-away/reconcile/execute','/api/tineco-toc/begin','/api/receiving','/api/location-move','/api/clients','/api/users/create','/api/operation-news']){
   const response=await handleRequest(request(path),configured),payload=await response.json();
   assert.equal(response.status,403,path);assert.equal(payload.error.code,'LOCAL_PRODUCTION_MUTATION_BLOCKED',path);
  }
+ const statusRequest=new Request('http://127.0.0.1:8787/api/operation-news/NEWS-20261026-AAAAAA/status',{method:'PATCH',headers:{Origin:origin,'Content-Type':'application/json'},body:'{}'}),statusResponse=await handleRequest(statusRequest,configured);assert.equal(statusResponse.status,403);assert.equal((await statusResponse.json()).error.code,'LOCAL_PRODUCTION_MUTATION_BLOCKED');
 });
 
 test('read-only B044 diagnosis remains available in local runtime against production data',async()=>{
@@ -48,8 +49,18 @@ test('production runtime cannot activate B044 local test data mode',async()=>{
  assert.equal(response.status,403);assert.equal(payload.error.code,'LOCAL_PRODUCTION_MUTATION_BLOCKED');assert.equal(called,false);
 });
 
+test('controlled Operation News authorization is local-only, server-configured and route-scoped',()=>{
+ const authorization='a'.repeat(64),local={...configured,OPERATION_NEWS_LOCAL_E2E:'enabled',OPERATION_NEWS_LOCAL_E2E_AUTHORIZATION:authorization},collection={name:'operation-news',action:'collection'},status={name:'operation-news',action:'status'};
+ assert.equal(shouldBlockProductionMutation(request('/api/operation-news'),local,'operation-news',collection),false);
+ const patch=new Request('http://127.0.0.1:8787/api/operation-news/NEWS-20261026-AAAAAA/status',{method:'PATCH',headers:{Origin:origin,'Content-Type':'application/json'},body:'{}'});assert.equal(shouldBlockProductionMutation(patch,local,'operation-news',status),false);
+ assert.equal(shouldBlockProductionMutation(request('/api/receiving'),local,'receive','receive'),true);
+ for(const unsafe of [{...local,OPERATION_NEWS_LOCAL_E2E:'disabled'},{...local,OPERATION_NEWS_LOCAL_E2E_AUTHORIZATION:''},{...local,OPERATION_NEWS_LOCAL_E2E_AUTHORIZATION:'wrong-authorization'},{...local,WORKER_RUNTIME_ENVIRONMENT:'production'}])assert.equal(shouldBlockProductionMutation(request('/api/operation-news'),unsafe,'operation-news',collection),true);
+ const browser=request('/api/operation-news');browser.headers.set('X-Operation-News-Local-E2E','enabled');assert.equal(shouldBlockProductionMutation(browser,configured,'operation-news',collection),true);
+});
+
 test('mutation classification covers shared operational writers and retains explicit read-only POST routes',()=>{
- for(const route of ['b044-create','b044-cancel','b044-reconcile-execute','tineco-begin','receive','location-move','client-create','users-create','sops-create','part-used-report-create'])assert.equal(isMutationRequest(route,null,'POST'),true,route);
+ for(const route of ['b044-create','b044-cancel','b044-reconcile-execute','tineco-begin','receive','location-move','client-create','users-create','sops-create','part-used-report-create','operation-news'])assert.equal(isMutationRequest(route,null,'POST'),true,route);
+ assert.equal(isMutationRequest('operation-news',null,'PATCH'),true);
  for(const route of ['b044-prepare','b044-recover','b044-reconcile','b044-reconcile-diagnose','picking-search','inventory-lookup','tineco-inventory','users-list'])assert.equal(isMutationRequest(route,null,'POST'),false,route);
  assert.equal(isMutationRequest('projects',{action:null},'POST'),true);assert.equal(isMutationRequest('cases',{action:null},'POST'),true);assert.equal(isMutationRequest('projects',{action:null},'GET'),false);
 });

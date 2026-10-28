@@ -37,6 +37,8 @@ export { PartUsedCoordinator } from './modules/part-used/part-used-coordinator.j
 import { allowedOrigins, corsHeaders, errorResponse, json } from "./utils/response.js";
 import { shouldBlockProductionMutation } from './security/mutation-guard.js';
 import { b044LocalTestConfig, isB044LocalTestMode } from './modules/b044-put-away/local-test-data.js';
+import {operationNewsRouteFor,handleOperationNews} from './modules/operation-news/operation-news-controller.js';
+import {createOperationNewsService} from './modules/operation-news/operation-news-service.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 function requestId(request) { return request.headers.get("X-Request-ID") || crypto.randomUUID(); }
@@ -53,7 +55,7 @@ async function readJson(request, limit = MAX_BODY_BYTES) {
 }
 
 export async function handleRequest(request, env) {
-  const started = Date.now(); const id = requestId(request); const pathname=new URL(request.url).pathname;const routeMatch = caseRouteFor(pathname)||caseCategoryRouteFor(pathname)||projectRouteFor(pathname)||sopRouteFor(pathname)||partUsedReportRouteFor(pathname)||partUsedRouteFor(pathname)||routeFor(pathname);let route=typeof routeMatch==='string'?routeMatch:routeMatch.name;if(route==='part-used-report-list'&&request.method==='POST')route='part-used-report-create';if(route==='safety-icons-list'&&request.method==='POST')route='safety-icons-create';if(route==='sops-list'&&request.method==='POST')route='sops-create';if(route==='sops-get'&&request.method==='PUT')route='sops-update';if(route==='sops-get'&&request.method==='DELETE')route='sops-delete'; const origin = request.headers.get("Origin");
+  const started = Date.now(); const id = requestId(request); const pathname=new URL(request.url).pathname;const routeMatch = caseRouteFor(pathname)||caseCategoryRouteFor(pathname)||projectRouteFor(pathname)||operationNewsRouteFor(pathname)||sopRouteFor(pathname)||partUsedReportRouteFor(pathname)||partUsedRouteFor(pathname)||routeFor(pathname);let route=typeof routeMatch==='string'?routeMatch:routeMatch.name;if(route==='part-used-report-list'&&request.method==='POST')route='part-used-report-create';if(route==='safety-icons-list'&&request.method==='POST')route='safety-icons-create';if(route==='sops-list'&&request.method==='POST')route='sops-create';if(route==='sops-get'&&request.method==='PUT')route='sops-update';if(route==='sops-get'&&request.method==='DELETE')route='sops-delete'; const origin = request.headers.get("Origin");
   if (request.method === "OPTIONS") {
     if (!origin || !allowedOrigins(env).has(origin)) return errorResponse(403, "CORS_DENIED", "Origin is not allowed.", false, id, request, env);
     return new Response(null, { status: 204, headers: corsHeaders(request, env) });
@@ -63,6 +65,9 @@ export async function handleRequest(request, env) {
   if (route === 'projects') return handleProjects(request,env,id,routeMatch);
   if (route === 'cases') return handleCases(request,env,id,routeMatch);
   if (route === 'case-categories') return handleCaseCategories(request,env,id,routeMatch);
+  if (route === 'operation-news') {
+    return handleOperationNews(request,env,id,routeMatch,{serviceFactory:()=>{const config=getFeishuConfig(env),auth=createFeishuAuthService(config),records=createFeishuRecordService(auth);return createOperationNewsService(config,records,{attachments:createFeishuAttachmentService(auth)});}});
+  }
   if (route === "not-found") return errorResponse(404, "NOT_FOUND", "Route not found.", false, id, request, env);
   if (!(route.startsWith('sops-') ? sopMethodAllowed(route==='sops-create'?'sops-list':['sops-update','sops-delete'].includes(route)?'sops-get':route,request.method) : methodAllowed(route, request.method))) return errorResponse(405, "METHOD_NOT_ALLOWED", "Method not allowed.", false, id, request, env);
   if (route === "health") return json({ ok: true, service: "mkite-secure-api" }, 200, request, env);

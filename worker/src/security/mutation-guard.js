@@ -34,6 +34,8 @@ export function productionMutationAllowed(request, env) {
 export function shouldBlockProductionMutation(request, env, route, routeMatch) {
   if (!isMutationRequest(route, routeMatch, request.method)) return false;
   if (env.FEISHU_DATA_ENVIRONMENT === 'local-test') return !(isB044LocalTestMode(env) && route.startsWith('b044-'));
+  if(controlledOperationNewsMutationAllowed(request,env,route,routeMatch))return false;
   return !productionMutationAllowed(request, env);
 }
 import { isB044LocalTestMode } from '../modules/b044-put-away/local-test-data.js';
+import {controlledOperationNewsMutationAllowed} from '../modules/operation-news/operation-news-local-e2e.js';
