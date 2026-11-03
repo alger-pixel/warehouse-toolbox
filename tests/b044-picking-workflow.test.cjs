@@ -60,14 +60,96 @@ test('pending confirmation survives remount and completion failure permits retry
   assert.match(h.root.innerHTML, /Server recheck blocked/);
 });
 
+function ambiguousCompletionFixture(total = 17, completed = total - 1) {
+  const h = setup(), state = h.tool.getState();
+  const rows = Array.from({ length: total }, (_, index) => ({
+    ...state.pl.packages[0], id: `row-${index + 1}`, packageRecordId: `rec-${index + 1}`,
+    trackingNumber: `TRACK${index + 1}`, normalizedTracking: `TRACK${index + 1}`,
+    packageStatus: index < completed ? 'Processed' : 'Processing',
+    completedAt: index < completed ? `2026-10-30T13:${String(index).padStart(2, '0')}:00.000Z` : null
+  }));
+  state.packages = rows; state.pl.packages = rows; state.pl.succeeded = rows.map(row => row.packageRecordId);
+  return { h, state, rows };
+}
+function authoritativeResult(rows, completedCount) {
+  return {
+    totalCount: rows.length, completedCount, remainingCount: rows.length - completedCount,
+    packages: rows.map((row, index) => ({
+      packageRecordId: row.packageRecordId, packageStatus: index < completedCount ? 'Processed' : 'Processing',
+      ownershipValid: true, completedAt: index < completedCount ? (row.completedAt || '2026-10-30T14:40:36.972Z') : null,
+      reconciliationRequired: false, partsPersisted: true
+    }))
+  };
+}
+
+test('17-package ambiguous final response promotes proven 17/17 completion without retrying mutation', async () => {
+  const { h, state, rows } = ambiguousCompletionFixture(); let completions = 0, reconciliations = 0;
+  h.window.MkiteB044Picking.complete = async () => { completions++; throw Object.assign(Error('B044_OPERATION_FAILED: Operation could not be confirmed.'), { code: 'B044_OPERATION_FAILED', retryable: true }); };
+  h.window.MkiteB044Picking.reconcile = async () => { reconciliations++; return authoritativeResult(rows, 17); };
+  h.tool.openScanMode(); await h.tool.processScan('TRACK17'); await h.tool.processScan('TRACK17');
+  assert.equal(completions, 1); assert.equal(reconciliations, 1); assert.equal(state.pendingPackageId, null);
+  assert.equal(h.tool.currentQueue().filter(row => row.completedAt).length, 17); assert.equal(h.tool.counts().remaining, 0);
+  assert.match(h.root.innerHTML, /17 \/ 17 COMPLETED/); assert.match(h.root.innerHTML, /PICKING LIST COMPLETE/);
+  assert.match(h.root.innerHTML, /Final processing details are still being finalized/);
+  assert.doesNotMatch(h.root.innerHTML, /Operation could not be confirmed|RETRY SAVE|CONFIRM PACKAGE/);
+  assert.deepEqual(h.notices, ['PACKAGE CONFIRMED']);
+});
+
+test('ambiguous failure never promotes when authoritative completion remains 16/17', async () => {
+  const { h, state, rows } = ambiguousCompletionFixture();
+  h.window.MkiteB044Picking.complete = async () => { throw Object.assign(Error('B044_OPERATION_FAILED: Operation could not be confirmed.'), { code: 'B044_OPERATION_FAILED', retryable: true }); };
+  h.window.MkiteB044Picking.reconcile = async () => authoritativeResult(rows, 16);
+  h.tool.openScanMode(); await h.tool.processScan('TRACK17'); await h.tool.processScan('TRACK17');
+  assert.equal(state.pendingPackageId, 'row-17'); assert.equal(h.tool.counts().remaining, 1);
+  assert.match(h.root.innerHTML, /16 \/ 17 COMPLETED/); assert.match(h.root.innerHTML, /Operation could not be confirmed/);
+  assert.doesNotMatch(h.root.innerHTML, /PICKING LIST COMPLETE|Final processing details/);
+});
+
+test('ambiguous non-final response accepts only the exact authoritatively completed pending package', async () => {
+  const { h, state, rows } = ambiguousCompletionFixture(3, 1); let completions = 0;
+  h.window.MkiteB044Picking.complete = async () => { completions++; throw Object.assign(Error('connection lost'), { code: 'CONNECTION_ERROR', retryable: true }); };
+  h.window.MkiteB044Picking.reconcile = async () => authoritativeResult(rows, 2);
+  h.tool.openScanMode(); await h.tool.processScan('TRACK2'); await h.tool.processScan('TRACK2');
+  assert.equal(completions, 1); assert.equal(state.pendingPackageId, null); assert.equal(h.tool.counts().remaining, 1);
+  assert.equal(rows[1].packageStatus, 'Processed'); assert.ok(rows[1].completedAt); assert.equal(rows[2].packageStatus, 'Processing');
+  assert.deepEqual(h.notices, ['PACKAGE CONFIRMED']); assert.doesNotMatch(h.root.innerHTML, /PICKING LIST COMPLETE/);
+});
+
+test('authoritative commanded completion requires verified Part Used and survives refresh without resubmission', async () => {
+  const { h, state, rows } = ambiguousCompletionFixture(2, 1); rows[1].commandRaw = '换箱';
+  state.pendingPackageId = rows[1].id; state.pendingConfirmationTracking = rows[1].trackingNumber;
+  state.temporaryParts = { packageId: rows[1].id, parts: [{ sku: 'CARTON-405-250-295', quantity: 1 }], ready: true, submitted: true, savePending: true };
+  const unverified = authoritativeResult(rows, 2); unverified.packages[1].partsPersisted = false;
+  h.window.MkiteB044Picking.reconcile = async () => unverified;
+  await h.tool.reconcilePickingList({ promotePending: true }); assert.equal(state.pendingPackageId, rows[1].id);
+  const verified = authoritativeResult(rows, 2); verified.packages[1].partsPersisted = true;
+  verified.packages[1].completionIntent = { parts: [{ sku: 'CARTON-405-250-295', quantity: 1 }] };
+  let completions = 0; h.window.MkiteB044Picking.complete = async () => { completions++; throw Object.assign(Error('lost acknowledgement'), { retryable: true }); };
+  h.window.MkiteB044Picking.reconcile = async () => verified;
+  await h.tool.processScan('TRACK2'); assert.equal(completions, 1); assert.equal(state.pendingPackageId, null);
+  assert.equal(state.temporaryParts, null); assert.equal(rows[1].partsPersisted, true); assert.deepEqual(rows[1].actualParts, [{ sku: 'CARTON-405-250-295', quantity: 1 }]);
+  h.module.cleanup(); h.module.init(h.context); assert.equal(h.tool.getState().pendingPackageId, null);
+  assert.equal(h.tool.currentQueue().filter(row => row.completedAt).length, 2);
+});
+
+test('authoritative reconciliation read failure retains pending confirmation and original error', async () => {
+  const { h, state } = ambiguousCompletionFixture(2, 1);
+  h.window.MkiteB044Picking.complete = async () => { throw Object.assign(Error('ambiguous completion'), { retryable: true }); };
+  h.window.MkiteB044Picking.reconcile = async () => { throw Error('read unavailable'); };
+  h.tool.openScanMode(); await h.tool.processScan('TRACK2'); await h.tool.processScan('TRACK2');
+  assert.equal(state.pendingPackageId, 'row-2'); assert.equal(h.tool.counts().remaining, 1);
+  assert.match(h.root.innerHTML, /ambiguous completion/); assert.doesNotMatch(h.root.innerHTML, /PACKAGE CONFIRMED|PICKING LIST COMPLETE/);
+});
+
 test('frontend routes all PL requests through secure API and exports exception reasons', async () => {
-  const calls = []; let workbook;
+  const calls = []; let workbook,delivery;
   const XLSX = require('../vendor/xlsx.full.min.js');
-  const window = { XLSX: { ...XLSX, writeFile: book => { workbook = book; } }, MkiteApiConfig: { mode: 'live' }, MkiteApiClient: { post: async (path, body) => { calls.push({ path, body }); return { ok: true, data: body }; } } };
+  const window = { XLSX, MkiteGeneratedFileDelivery:{deliverXlsx:async input=>(delivery=input,workbook=input.workbook,{downloaded:true,archived:true})}, MkiteApiConfig: { mode: 'live' }, MkiteApiClient: { post: async (path, body) => { calls.push({ path, body }); return { ok: true, data: body }; } } };
   vm.runInNewContext(fs.readFileSync('vendor/JsBarcode.code128.min.js','utf8'),{window});vm.runInNewContext(fs.readFileSync('js/client-tools/b044/picking-workflow.js', 'utf8'), { window, document: {} });
   for (const action of ['prepare', 'recover', 'diagnoseReconciliation', 'reconcileStale', 'create', 'startProcess', 'complete', 'cancel']) await window.MkiteB044Picking[action]({ test: true });
   assert.deepEqual(calls.map(c => c.path), ['/api/b044/put-away/prepare', '/api/b044/put-away/recover', '/api/b044/put-away/reconcile/diagnose', '/api/b044/put-away/reconcile/execute', '/api/b044/put-away/create-picking-list', '/api/b044/put-away/start-process', '/api/b044/put-away/complete-package', '/api/b044/put-away/cancel-picking-list']);
-  window.MkiteB044Picking.exportExceptions([{ trackingNumber: '001', reason: 'NOT FOUND IN MKITE PACKAGE CLASS' }, { trackingNumber: '002', reason: 'STATUS Processing' }, { trackingNumber: '003', reason: 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS' }]);
+  await window.MkiteB044Picking.exportExceptions([{ trackingNumber: '001', reason: 'NOT FOUND IN MKITE PACKAGE CLASS' }, { trackingNumber: '002', reason: 'STATUS Processing' }, { trackingNumber: '003', reason: 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS' }]);
+  assert.equal(delivery.generatorKey,'b044-picking-exceptions-excel');assert.deepEqual(structuredClone(delivery.parameters),{exceptionCount:3});assert.equal(delivery.fileName,'B044-Picking-Exceptions.xlsx');
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets.Exceptions);
   assert.equal(rows[2].REASON, 'AMBIGUOUS PARTIAL MATCH — MULTIPLE ACTIVE PACKAGE RECORDS');
   assert.equal(rows[0].REASON, 'NOT FOUND IN MKITE PACKAGE CLASS'); assert.equal(rows[1].REASON, 'STATUS Processing');

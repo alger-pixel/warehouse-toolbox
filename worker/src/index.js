@@ -4,13 +4,14 @@ import {caseCategoryRouteFor,handleCaseCategories} from './modules/case-categori
 export {CaseCategoryCoordinator} from './modules/case-categories/case-category-coordinator.js';
 import {caseRouteFor,handleCases} from './modules/cases/case-controller.js';
 export {CaseCoordinator} from './modules/cases/case-coordinator.js';
-import { handleInventoryLookup } from './modules/inventory-lookup/inventory-service.js';
+import { createWarehouseInventoryLookupService, handleInventoryLookup } from './modules/inventory-lookup/inventory-service.js';
 import { createPickingSearchService, handlePickingSearch } from './modules/batch-picking-lists/search-service.js';
 import { handleUsers } from './modules/users/user-controller.js';
 export { UserManagementCoordinator } from './modules/users/user-coordinator.js';
 import { handleCommandSimplifier } from './modules/ai/command-simplifier-controller.js';
 import { createTinecoInventoryService, handleTinecoInventory } from './modules/tineco-inventory/inventory-service.js';
 import { createTinecoSnEnrichmentService } from './modules/tineco-inventory/sn-enrichment-service.js';
+import { createTinecoLocationEnrichmentService } from './modules/tineco-inventory/location-enrichment-service.js';
 import { handleTineco } from './modules/tineco-toc/tineco-controller.js';
 export { TinecoTocCoordinator } from './modules/tineco-toc/tineco-coordinator.js';
 import { createInventoryService } from './modules/inventory/inventory-service.js';
@@ -39,6 +40,8 @@ import { shouldBlockProductionMutation } from './security/mutation-guard.js';
 import { b044LocalTestConfig, isB044LocalTestMode } from './modules/b044-put-away/local-test-data.js';
 import {operationNewsRouteFor,handleOperationNews} from './modules/operation-news/operation-news-controller.js';
 import {createOperationNewsService} from './modules/operation-news/operation-news-service.js';
+import {downloadCenterRouteFor,handleDownloadCenter} from './modules/download-center/download-center-controller.js';
+import {createDownloadCenterService} from './modules/download-center/download-center-service.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 function requestId(request) { return request.headers.get("X-Request-ID") || crypto.randomUUID(); }
@@ -55,7 +58,7 @@ async function readJson(request, limit = MAX_BODY_BYTES) {
 }
 
 export async function handleRequest(request, env) {
-  const started = Date.now(); const id = requestId(request); const pathname=new URL(request.url).pathname;const routeMatch = caseRouteFor(pathname)||caseCategoryRouteFor(pathname)||projectRouteFor(pathname)||operationNewsRouteFor(pathname)||sopRouteFor(pathname)||partUsedReportRouteFor(pathname)||partUsedRouteFor(pathname)||routeFor(pathname);let route=typeof routeMatch==='string'?routeMatch:routeMatch.name;if(route==='part-used-report-list'&&request.method==='POST')route='part-used-report-create';if(route==='safety-icons-list'&&request.method==='POST')route='safety-icons-create';if(route==='sops-list'&&request.method==='POST')route='sops-create';if(route==='sops-get'&&request.method==='PUT')route='sops-update';if(route==='sops-get'&&request.method==='DELETE')route='sops-delete'; const origin = request.headers.get("Origin");
+  const started = Date.now(); const id = requestId(request); const pathname=new URL(request.url).pathname;const routeMatch = caseRouteFor(pathname)||caseCategoryRouteFor(pathname)||projectRouteFor(pathname)||operationNewsRouteFor(pathname)||downloadCenterRouteFor(pathname)||sopRouteFor(pathname)||partUsedReportRouteFor(pathname)||partUsedRouteFor(pathname)||routeFor(pathname);let route=typeof routeMatch==='string'?routeMatch:routeMatch.name;if(route==='part-used-report-list'&&request.method==='POST')route='part-used-report-create';if(route==='safety-icons-list'&&request.method==='POST')route='safety-icons-create';if(route==='sops-list'&&request.method==='POST')route='sops-create';if(route==='sops-get'&&request.method==='PUT')route='sops-update';if(route==='sops-get'&&request.method==='DELETE')route='sops-delete'; const origin = request.headers.get("Origin");
   if (request.method === "OPTIONS") {
     if (!origin || !allowedOrigins(env).has(origin)) return errorResponse(403, "CORS_DENIED", "Origin is not allowed.", false, id, request, env);
     return new Response(null, { status: 204, headers: corsHeaders(request, env) });
@@ -67,6 +70,9 @@ export async function handleRequest(request, env) {
   if (route === 'case-categories') return handleCaseCategories(request,env,id,routeMatch);
   if (route === 'operation-news') {
     return handleOperationNews(request,env,id,routeMatch,{serviceFactory:()=>{const config=getFeishuConfig(env),auth=createFeishuAuthService(config),records=createFeishuRecordService(auth);return createOperationNewsService(config,records,{attachments:createFeishuAttachmentService(auth)});}});
+  }
+  if (route === 'download-center') {
+    return handleDownloadCenter(request,env,id,routeMatch,{serviceFactory:()=>{const config=getFeishuConfig(env),auth=createFeishuAuthService(config),records=createFeishuRecordService(auth);return createDownloadCenterService(config,records,{attachments:createFeishuAttachmentService(auth)});}});
   }
   if (route === "not-found") return errorResponse(404, "NOT_FOUND", "Route not found.", false, id, request, env);
   if (!(route.startsWith('sops-') ? sopMethodAllowed(route==='sops-create'?'sops-list':['sops-update','sops-delete'].includes(route)?'sops-get':route,request.method) : methodAllowed(route, request.method))) return errorResponse(405, "METHOD_NOT_ALLOWED", "Method not allowed.", false, id, request, env);
@@ -93,7 +99,11 @@ export async function handleRequest(request, env) {
     if(route.startsWith('sops-'))response=await handleSops(route,{...parsed.body,sopId:routeMatch.sopId,assetId:routeMatch.assetId},createSopService(config,records,createFeishuAttachmentService(auth)),id,request,env);
     else if(route.startsWith('safety-icons-'))response=await handleSafetyIcons(route,{...parsed.body,recordId:routeMatch.recordId},createSafetyIconService(config,records,createFeishuAttachmentService(auth)),id,request,env);
     else if (route.startsWith("picking-")) response = await handlePickingSearch(route.slice(8), createPickingSearchService(config, records), parsed.body, id, request, env);
-    else if (route === "tineco-inventory") response = await handleTinecoInventory(createTinecoInventoryService(config, records, createTinecoSnEnrichmentService(env,{onDiagnostic:diagnostic=>console.log(JSON.stringify({requestId:id,route:'tineco-sn-enrichment',...diagnostic}))})), parsed.body, id, request, env);
+    else if (route === "tineco-inventory") {
+      const snEnrichment=createTinecoSnEnrichmentService(env,{onDiagnostic:diagnostic=>console.log(JSON.stringify({requestId:id,route:'tineco-sn-enrichment',...diagnostic}))});
+      const locationEnrichment=createTinecoLocationEnrichmentService(createWarehouseInventoryLookupService(env,{onDiagnostic:diagnostic=>console.log(JSON.stringify({requestId:id,route:'tineco-location-upstream',...diagnostic}))}),env,{onDiagnostic:diagnostic=>console.log(JSON.stringify({requestId:id,route:'tineco-location-enrichment',...diagnostic}))});
+      response = await handleTinecoInventory(createTinecoInventoryService(config, records, snEnrichment, locationEnrichment), parsed.body, id, request, env);
+    }
     else if (route.startsWith("tineco-")) response = await handleTineco(route.slice(7), parsed.body, config, request, env, id);
     else if (route === "inventory-search") response = await createInventoryController(createInventoryService(config, records)).search(parsed.body, id, request, env);
     else if (route.startsWith("b044-")) response = await handleB044(route, parsed.body, config, records, id, request, env);

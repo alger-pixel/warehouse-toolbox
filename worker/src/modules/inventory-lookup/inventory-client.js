@@ -44,7 +44,7 @@ export function createWarehouseInventoryClient(env, { fetchImpl = fetch, timeout
         } finally { clearTimeout(timer); }
       }, { sleep, random, onRetry: () => { retries++; } });
       if (retries) onDiagnostic({ outcome: 'success', retries });
-      return data;
+      return { ...data, _upstreamRetries:retries };
     } catch (error) { onDiagnostic({ outcome: 'failed', retries, classification: error.classification || 'lookup_failed' }); throw error; }
   } };
 }

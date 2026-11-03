@@ -1,0 +1,8 @@
+export const DOWNLOAD_STATUSES=Object.freeze(['PROCESSING','READY','FAILED','ARCHIVED']);
+export const DOWNLOAD_FILE_TYPES=Object.freeze(['XLSX','CSV','PDF','ZIP','TXT','JSON']);
+export const DOWNLOAD_FIELDS=Object.freeze({id:'DOWNLOAD ID',fileName:'FILE NAME',attachment:'ATTACHMENT',fileType:'FILE TYPE',fileSize:'FILE SIZE',toolId:'TOOL ID',toolName:'TOOL NAME',function:'FUNCTION',sourceRoute:'SOURCE ROUTE',warehouse:'WAREHOUSE',clientId:'CLIENT ID',createdBy:'CREATED BY',createdAt:'CREATED AT',status:'STATUS',readyAt:'READY AT',errorMessage:'ERROR MESSAGE',parameters:'PARAMETERS',sha256:'SHA-256'});
+export const DOWNLOAD_FIELD_TYPES=Object.freeze({[DOWNLOAD_FIELDS.id]:1,[DOWNLOAD_FIELDS.fileName]:1,[DOWNLOAD_FIELDS.attachment]:17,[DOWNLOAD_FIELDS.fileType]:3,[DOWNLOAD_FIELDS.fileSize]:2,[DOWNLOAD_FIELDS.toolId]:1,[DOWNLOAD_FIELDS.toolName]:1,[DOWNLOAD_FIELDS.function]:1,[DOWNLOAD_FIELDS.sourceRoute]:1,[DOWNLOAD_FIELDS.warehouse]:1,[DOWNLOAD_FIELDS.clientId]:1,[DOWNLOAD_FIELDS.createdBy]:1,[DOWNLOAD_FIELDS.createdAt]:5,[DOWNLOAD_FIELDS.status]:3,[DOWNLOAD_FIELDS.readyAt]:5,[DOWNLOAD_FIELDS.errorMessage]:1,[DOWNLOAD_FIELDS.parameters]:1,[DOWNLOAD_FIELDS.sha256]:1});
+export const DOWNLOAD_FIELD_NAMES=Object.freeze(Object.values(DOWNLOAD_FIELDS));
+export const DOWNLOAD_REQUIRED_FIELDS=Object.freeze(['DOWNLOAD ID','FILE NAME','FILE TYPE','TOOL ID','TOOL NAME','FUNCTION','SOURCE ROUTE','CREATED BY','CREATED AT','STATUS']);
+export const DOWNLOAD_OPTIONAL_FIELDS=Object.freeze(DOWNLOAD_FIELD_NAMES.filter(name=>!DOWNLOAD_REQUIRED_FIELDS.includes(name)));
+export const DOWNLOAD_SERVER_CONTROLLED_FIELDS=Object.freeze(['DOWNLOAD ID','FILE SIZE','CREATED AT','STATUS','READY AT','ERROR MESSAGE','SHA-256']);

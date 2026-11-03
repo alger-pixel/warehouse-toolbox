@@ -36,6 +36,7 @@
     if (eventDate && !Number.isNaN(eventDate.getTime())) { const parts = localDateParts(eventDate); return `${parts.date} ${parts.time}`; }
     return item.time || "";
   }
+  function exportParameters(state, knownValues) { const multiple = summaryRows(state.history, knownValues).filter((row) => row.status === "MULTIPLE SCAN").length; return { knownItemCount: knownValues.size, matchedCount: state.counters.matched, multipleScanCount: multiple, failedCount: state.counters.failed, totalScanCount: state.counters.total }; }
   function summaryRows(history, knownValues) {
     const recognized = new Map(Array.from(knownValues.keys(), (key) => [key, []]));
     history.slice().reverse().forEach((item) => {
@@ -162,12 +163,14 @@
       this.setLocked(false); this.setSetupStatus(STATUS.READY, "Waiting for input"); this.setScanModeStatus(STATUS.READY, "Scan or enter a value"); this.renderStatistics(); this.renderHistory(); this.context.storage.remove(SESSION_KEY); this.context.toast.show("Matching tool clean reset"); this.deferFocus(false);
     },
 
-    exportExcel() {
+    async exportExcel() {
       if (!this.state.history.length && !this.knownValues.size) { this.context.toast.show("No Matching data to export."); return false; }
       if (!window.XLSX) { this.context.toast.show("Excel export is unavailable."); return false; }
+      if (this.exportBusy) return false;
       try {
-        const artifact = buildWorkbook(window.XLSX, this.state, this.knownValues, new Date()); window.XLSX.writeFile(artifact.workbook, artifact.filename, { compression: true }); this.context.toast.show("Excel workbook exported"); return true;
+        this.exportBusy = true; const artifact = buildWorkbook(window.XLSX, this.state, this.knownValues, new Date()),result=await window.MkiteGeneratedFileDelivery.deliverXlsx({generatorKey:'matching-excel',fileName:artifact.filename,workbook:artifact.workbook,parameters:exportParameters(this.state,this.knownValues),notify:message=>this.context.toast.show(message)});return result.downloaded;
       } catch (error) { this.context.toast.show("Excel export failed."); return false; }
+      finally { this.exportBusy = false; }
     },
 
     renderStatistics() { const values = { known: this.knownValues.size, total: this.state.counters.total, matched: this.state.counters.matched, duplicate: this.state.counters.duplicate, failed: this.state.counters.failed }; Object.entries(values).forEach(([name, value]) => this.root.querySelectorAll(`[data-stat="${name}"]`).forEach((element) => { element.textContent = value; })); this.root.querySelector("[data-known-count]").textContent = this.knownValues.size; },
@@ -177,6 +180,6 @@
     saveSession() { this.context.storage.set(SESSION_KEY, this.state); }, restoreSession() { return this.context ? this.context.storage.get(SESSION_KEY, null) : null; },
     cleanup() { this.clearResultTimer(); document.body.classList.remove("matching-scan-mode-active"); if (this.context && this.context.audio) this.context.audio.cancelSpeech(); this.context = null; this.root = null; this.elements = null; this.handlers = null; },
 
-    test: { normalize, uniqueKnown, decide, summaryRows, exportRows, buildWorkbook, blankSession, validSession, STATUS, SESSION_KEY }
+    test: { normalize, uniqueKnown, decide, summaryRows, exportRows, buildWorkbook, exportParameters, blankSession, validSession, STATUS, SESSION_KEY }
   };
 }(window));

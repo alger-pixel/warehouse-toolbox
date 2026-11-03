@@ -21,6 +21,7 @@ export function getFeishuConfig(env) {
     caseCategoryTableId: typeof env.FEISHU_CASE_CATEGORY_TABLE_ID === "string" ? env.FEISHU_CASE_CATEGORY_TABLE_ID.trim() : "",
     caseClassTableId: typeof env.FEISHU_CASE_CLASS_TABLE_ID === "string" ? env.FEISHU_CASE_CLASS_TABLE_ID.trim() : "",
     operationNewsTableId: typeof env.FEISHU_OPERATION_NEWS_TABLE_ID === "string" ? env.FEISHU_OPERATION_NEWS_TABLE_ID.trim() : "",
+    downloadCenterTableId: typeof env.FEISHU_DOWNLOAD_CENTER_TABLE_ID === "string" ? env.FEISHU_DOWNLOAD_CENTER_TABLE_ID.trim() : "",
     warehouseTimeZone: typeof env.WAREHOUSE_TIME_ZONE === "string" && env.WAREHOUSE_TIME_ZONE.trim() ? env.WAREHOUSE_TIME_ZONE.trim() : "America/Toronto"
   };
 }

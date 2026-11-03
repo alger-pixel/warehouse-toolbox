@@ -6,6 +6,9 @@ export const MODEL_MAX_STALE_MS = 90 * 24 * 60 * 60 * 1000;
 export const STATUS_MAX_STALE_MS = 24 * 60 * 60 * 1000;
 export const SUCCESS_RETENTION_SECONDS = 90 * 24 * 60 * 60;
 export const NO_MATCH_RETENTION_SECONDS = 10 * 60;
+export const LOCATION_FRESH_MS = 10 * 60 * 1000;
+export const LOCATION_MAX_STALE_MS = 24 * 60 * 60 * 1000;
+export const LOCATION_RETENTION_SECONDS = 24 * 60 * 60;
 
 export const normalizeSn = value => typeof value === 'string' ? value.trim() : '';
 const isoTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
@@ -17,6 +20,17 @@ export async function tinecoSnCacheKey(sn) {
   const bytes = new TextEncoder().encode(normalized);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return `v1:tineco-sn:${[...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+export async function tinecoLocationCacheKey(sn) {
+  const normalized = normalizeSn(sn);
+  const bytes = new TextEncoder().encode(normalized);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return `v1:tineco-location:${[...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('')}`;
+}
+
+export function validLocationCacheEntry(value, sn) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && value.schemaVersion === CACHE_SCHEMA_VERSION && value.kind === 'tineco-location' && value.sn === normalizeSn(sn) && ['SUCCESS','NO_MATCH'].includes(value.outcome) && Array.isArray(value.locations) && value.locations.every(location => typeof location === 'string') && isoTime(value.fetchedAt));
 }
 
 export function validSnCacheEntry(value, sn) {
@@ -56,6 +70,26 @@ export function createEnrichmentCache(binding, { onDiagnostic = () => {} } = {})
       const entry = { schemaVersion:CACHE_SCHEMA_VERSION, kind:'tineco-sn', sn:normalizeSn(sn), outcome:'NO_MATCH', fetchedAt:new Date(now).toISOString() };
       if (!binding?.put) return entry;
       try { await binding.put(await tinecoSnCacheKey(sn), JSON.stringify(entry), { expirationTtl:NO_MATCH_RETENTION_SECONDS }); }
+      catch { onDiagnostic('cacheWriteFailed'); }
+      return entry;
+    },
+    async getLocation(sn, now = Date.now()) {
+      if (!binding?.get) return null;
+      const key = await tinecoLocationCacheKey(sn);
+      try {
+        const raw = await binding.get(key);
+        if (raw == null) return null;
+        let parsed; try { parsed = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { onDiagnostic('cacheInvalid'); return null; }
+        if (!validLocationCacheEntry(parsed, sn)) { onDiagnostic('cacheInvalid'); return null; }
+        const entryAge=age(parsed.fetchedAt,now);if(entryAge>LOCATION_MAX_STALE_MS)return null;
+        return { key, entry:parsed, fresh:entryAge<=LOCATION_FRESH_MS };
+      } catch { onDiagnostic('cacheReadFailed'); return null; }
+    },
+    async putLocation(sn, locations, now = Date.now()) {
+      const normalized = [...new Set((Array.isArray(locations) ? locations : []).map(value => String(value).trim()).filter(Boolean))];
+      const entry = { schemaVersion:CACHE_SCHEMA_VERSION, kind:'tineco-location', sn:normalizeSn(sn), outcome:normalized.length?'SUCCESS':'NO_MATCH', locations:normalized, fetchedAt:new Date(now).toISOString() };
+      if (!binding?.put) return entry;
+      try { await binding.put(await tinecoLocationCacheKey(sn), JSON.stringify(entry), { expirationTtl:LOCATION_RETENTION_SECONDS }); }
       catch { onDiagnostic('cacheWriteFailed'); }
       return entry;
     }

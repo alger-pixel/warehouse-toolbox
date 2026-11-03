@@ -1,4 +1,5 @@
 import {OperationNewsError} from './operation-news-service.js';
+import {safeFileName} from '../../utils/file-delivery.js';
 
 export const NEWS_MEDIA_LIMITS=Object.freeze({pictureCount:5,pictureBytes:5*1024*1024,pictureTotalBytes:20*1024*1024,attachmentCount:5,attachmentBytes:10*1024*1024});
 const PICTURES=new Map([['image/jpeg',new Set(['jpg','jpeg'])],['image/png',new Set(['png'])],['image/webp',new Set(['webp'])]]);
@@ -14,10 +15,7 @@ const DOCUMENTS=new Map([
 ]);
 const fail=(code,message,status=400)=>{throw new OperationNewsError(code,message,status);};
 const extension=name=>String(name||'').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]||'';
-export function safeMediaName(value,fallback='file'){
- const cleaned=String(value||'').normalize('NFKC').replace(/[\u0000-\u001f\u007f]/g,'').replace(/[\\/]/g,'-').replace(/["\r\n]/g,'').trim().slice(0,180);
- return cleaned&&cleaned!=='.'&&cleaned!=='..'?cleaned:fallback;
-}
+export const safeMediaName=safeFileName;
 const imageSignature=(bytes,type)=>type==='image/png'?bytes.length>=8&&[137,80,78,71,13,10,26,10].every((v,i)=>bytes[i]===v):type==='image/jpeg'?bytes.length>=3&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255:bytes.length>=12&&String.fromCharCode(...bytes.slice(0,4))==='RIFF'&&String.fromCharCode(...bytes.slice(8,12))==='WEBP';
 const documentSignature=(bytes,type)=>{
  if(type==='application/pdf')return bytes.length>=5&&String.fromCharCode(...bytes.slice(0,5))==='%PDF-';

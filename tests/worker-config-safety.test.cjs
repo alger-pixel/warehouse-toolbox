@@ -5,14 +5,25 @@ test('deployment check accepts only the mkite-secure-api Worker configuration',(
  assert.equal(checkWorkerConfig(),'mkite-secure-api');
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mkite-worker-check-')),wrong=path.join(dir,'wrangler.toml');fs.writeFileSync(wrong,'name = "warehouse-toolbox"\n');
  assert.throws(()=>checkWorkerConfig(wrong),/Worker deployment blocked.*mkite-secure-api/);
- const base='name = "mkite-secure-api"\nFEISHU_CASE_CATEGORY_TABLE_ID = "tblCategories"\nFEISHU_OPERATION_NEWS_TABLE_ID = "tblNews"\n';
+ const base='name = "mkite-secure-api"\nFEISHU_CASE_CATEGORY_TABLE_ID = "tblCategories"\nFEISHU_OPERATION_NEWS_TABLE_ID = "tblNews"\nFEISHU_DOWNLOAD_CENTER_TABLE_ID = "tblDownloads"\nFEISHU_DATA_ENVIRONMENT = "production"\nWORKER_RUNTIME_ENVIRONMENT = "production"\n';
  for(const value of ['', 'not-a-table']){fs.writeFileSync(wrong,`${base}FEISHU_USER_TABLE_ID = "${value}"\n`);assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_USER_TABLE_ID/);}
- fs.writeFileSync(wrong,'name = "mkite-secure-api"\nFEISHU_USER_TABLE_ID = "tblUsers"\nFEISHU_OPERATION_NEWS_TABLE_ID = "tblNews"\n');assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_CASE_CATEGORY_TABLE_ID/);
- fs.writeFileSync(wrong,'name = "mkite-secure-api"\nFEISHU_USER_TABLE_ID = "tblUsers"\nFEISHU_CASE_CATEGORY_TABLE_ID = "tblCategories"\n');assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_OPERATION_NEWS_TABLE_ID/);
+ fs.writeFileSync(wrong,'name = "mkite-secure-api"\nFEISHU_USER_TABLE_ID = "tblUsers"\nFEISHU_OPERATION_NEWS_TABLE_ID = "tblNews"\nFEISHU_DOWNLOAD_CENTER_TABLE_ID = "tblDownloads"\n');assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_CASE_CATEGORY_TABLE_ID/);
+ fs.writeFileSync(wrong,'name = "mkite-secure-api"\nFEISHU_USER_TABLE_ID = "tblUsers"\nFEISHU_CASE_CATEGORY_TABLE_ID = "tblCategories"\nFEISHU_DOWNLOAD_CENTER_TABLE_ID = "tblDownloads"\n');assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_OPERATION_NEWS_TABLE_ID/);
+ fs.writeFileSync(wrong,'name = "mkite-secure-api"\nFEISHU_USER_TABLE_ID = "tblUsers"\nFEISHU_CASE_CATEGORY_TABLE_ID = "tblCategories"\nFEISHU_OPERATION_NEWS_TABLE_ID = "tblNews"\n');assert.throws(()=>checkWorkerConfig(wrong),/FEISHU_DOWNLOAD_CENTER_TABLE_ID/);
  fs.rmSync(dir,{recursive:true,force:true});
 });
 test('root scripts use explicit Worker config and safe local ports',()=>{
  const scripts=require('../package.json').scripts;assert.equal(scripts['worker:dev'],'npx wrangler dev --config worker/wrangler.toml --local --port 8787');assert.match(scripts['worker:deploy'],/^npm run worker:check && npx wrangler deploy --config worker\/wrangler\.toml$/);assert.equal(scripts['frontend:dev'],'node scripts/local-dev-server.js');assert.equal(scripts.dev,'node scripts/local-dev.js');
+ assert.equal(scripts['worker:dev:download-center-e2e'],'node scripts/worker-dev-download-center-e2e.js');
+ assert.match(fs.readFileSync('worker/wrangler.toml','utf8'),/^FEISHU_DOWNLOAD_CENTER_TABLE_ID = "tblHWe1ZH7F8IL8D"/m);
+});
+test('controlled Download Centre launcher is process-scoped, fixed-port, and secret-free',()=>{
+ const launcher=require('../scripts/worker-dev-download-center-e2e.js'),args=[...launcher.WRANGLER_ARGS],source=fs.readFileSync('scripts/worker-dev-download-center-e2e.js','utf8'),packageSource=fs.readFileSync('package.json','utf8');
+ assert.deepEqual(args,['wrangler','dev','--config','worker/wrangler.toml','--local','--port','8787','--var','DOWNLOAD_CENTER_LOCAL_E2E:enabled']);
+ assert.doesNotMatch(source+packageSource,/OPERATION_NEWS_LOCAL_E2E_AUTHORIZATION\s*[:=]/);
+ assert.doesNotMatch(source,/\.dev\.vars|writeFile|appendFile|localStorage|sessionStorage|document\.|window\.|cookie|authorization/i);
+ let command,options,banner='';const child={once(){return child;},kill(){}};launcher.start({stdout:{write:value=>{banner+=value;}},spawnProcess:(name,spawnArgs,spawnOptions)=>(command={name,args:spawnArgs,options:spawnOptions},child)});
+ assert.equal(command.name,'npx');assert.deepEqual(command.args,args);assert.equal(command.options.stdio,'inherit');assert.equal(command.options.env,process.env);assert.match(banner,/session only/i);assert.doesNotMatch(banner,/authorization/i);
 });
 test('developer secrets stay ignored, example values are placeholders, and runtime frontend contains no upstream credentials',()=>{
  const ignore=fs.readFileSync('.gitignore','utf8');assert.match(ignore,/^worker\/\.dev\.vars$/m);assert.match(ignore,/^!worker\/\.dev\.vars\.example$/m);

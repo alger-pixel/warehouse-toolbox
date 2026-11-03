@@ -13,10 +13,10 @@
     return result.data;
   }
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  function exportExceptions(rows) {
+  async function exportExceptions(rows,notify=()=>{}) {
     const columns = [['excelRow', 'SOURCE ROW'], ['arrivalDate', '到仓日期'], ['trackingNumber', '跟踪号'], ['inboundSku', '入库SKU'], ['warehouseInboundOrder', '仓库入库单号'], ['clientId', 'CLIENT ID'], ['finalSku', 'FINAL SKU'], ['packageStatus', 'PACKAGE STATUS'], ['reason', 'REASON']];
     const sheet = window.XLSX.utils.aoa_to_sheet([columns.map(c => c[1]), ...rows.map(r => columns.map(c => String(r[c[0]] ?? '')))]);
-    const book = window.XLSX.utils.book_new(); window.XLSX.utils.book_append_sheet(book, sheet, 'Exceptions'); window.XLSX.writeFile(book, 'B044-Picking-Exceptions.xlsx');
+    const book = window.XLSX.utils.book_new(); window.XLSX.utils.book_append_sheet(book, sheet, 'Exceptions'); return window.MkiteGeneratedFileDelivery.deliverXlsx({generatorKey:'b044-picking-exceptions-excel',fileName:'B044-Picking-Exceptions.xlsx',workbook:book,parameters:{exceptionCount:rows.length},notify});
   }
   const commandText = row => String(row.commandDisplay || row.commandRaw || '') + (row.commandReference ? '\nREF: '+row.commandReference : '');
   function a4Command(row) { const value=commandText(row);return esc(value.length>400?value.slice(0,250)+'\nCONTINUED IN COMMAND APPENDIX — PACKAGE #'+row.sequence:value); }

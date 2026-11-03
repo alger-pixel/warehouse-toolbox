@@ -7,7 +7,7 @@
   const SUPPORTED_ORDER_PREFIXES = ["RMA", "RV"].sort((a, b) => b.length - a.length);
   const STATUS = { NOT_PRINTED: "NOT PRINTED", PRINTED: "PRINTED", REPRINTED: "REPRINTED" };
   const emptyProgress = () => ({ active: false, operation: '', stage: '', completed: 0, total: 0, percent: 0, message: '', indeterminate: false, error: '' });
-  const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, recoveryCandidate: null, staleOwnership: null, commandCache: [], pendingPackageId: null, pendingConfirmationTracking: null, creationRequestId: null, progress: emptyProgress() });
+  const emptySession = () => ({ file: null, totalRows: 0, packages: [], invalidRows: [], prepared: null, pl: null, recoveryCandidate: null, staleOwnership: null, commandCache: [], pendingPackageId: null, pendingConfirmationTracking: null, completionNotice: '', creationRequestId: null, progress: emptyProgress() });
   let adminRecoveryKey = '';
   let context = null;
   let state = emptySession();
@@ -294,7 +294,7 @@
     document.getElementById("pas-retry-commands")?.addEventListener("click", retryCommands);
     document.getElementById("pas-prepare")?.addEventListener("click", prepareInventory);
     document.getElementById("pas-create-pl")?.addEventListener("click", createPickingList);
-    document.getElementById("pas-export-exceptions")?.addEventListener("click", () => window.MkiteB044Picking.exportExceptions(state.prepared.exceptions));
+    document.getElementById("pas-export-exceptions")?.addEventListener("click", () => window.MkiteB044Picking.exportExceptions(state.prepared.exceptions,message=>context.toast.show(message)));
     document.getElementById("pas-print-a4")?.addEventListener("click", () => window.MkiteB044Picking.printA4(state.pl, inventoryPrintSnapshot(state.pl)));
     document.getElementById("pas-file")?.addEventListener("change", handleFile);
     document.getElementById("pas-preview")?.addEventListener("click", renderPreview);
@@ -357,7 +357,28 @@
     if (!recoveryAvailable()) return '';
     return adminRecoveryKey ? '<button class="button" id="pas-admin-recover">ADMIN RECOVER PL</button>' : '<details><summary>Administrative recovery access</summary><label>Administration key<input id="pas-admin-key" type="password" autocomplete="off"></label><button class="button" id="pas-admin-unlock">VERIFY ADMIN ACCESS</button></details>';
   }
-  async function reconcilePickingList() {
+  function applyConfirmedCompletion(item, result, notice = '') {
+    item.actualParts = result.actualParts || result.completionIntent?.parts || item.actualParts || [];
+    item.completedAt = result.completedAt;
+    item.packageStatus = result.packageStatus || result.status || 'Processed';
+    item.partsPersisted = result.partsPersisted;
+    item.reconciliationRequired = false;
+    state.temporaryParts = null;
+    state.pendingPackageId = null;
+    state.pendingConfirmationTracking = null;
+    state.completionNotice = notice;
+    if (result.pickingListComplete) state.completedAt = result.completedAt;
+    save();
+  }
+  function promoteAuthoritativePending(result, pendingId) {
+    const item = scanPackageById(pendingId);
+    const authoritative = result?.packages?.find(row => row.packageRecordId === item?.packageRecordId);
+    if (!item || !authoritative || authoritative.packageStatus !== 'Processed' || !authoritative.completedAt || authoritative.reconciliationRequired || authoritative.ownershipValid !== true || (item.commandRaw && authoritative.partsPersisted !== true)) return false;
+    const complete = result.totalCount > 0 && result.completedCount === result.totalCount && result.remainingCount === 0 && result.packages.every(row => row.packageStatus === 'Processed' && row.completedAt && !row.reconciliationRequired);
+    applyConfirmedCompletion(item, { ...authoritative, pickingListComplete: complete }, complete ? 'Picking List completion was confirmed. Final processing details are still being finalized.' : 'Package completion was confirmed.');
+    return true;
+  }
+  async function reconcilePickingList({ promotePending = false } = {}) {
     if (!state.pl?.pickingListNumber || state.pl.phase === 'cancelled' || !window.MkiteB044Picking?.reconcile) return;
     const run = lifecycle, pl = state.pl;
     try {
@@ -373,7 +394,8 @@
         }
       }
       if (result.cancellationAllowed === true && /CANCEL_PROCESSED_BLOCKED/.test(state.workflowError || '')) state.workflowError = '';
-      save();
+      const promoted = promotePending && state.pendingPackageId ? promoteAuthoritativePending(result, state.pendingPackageId) : false;
+      if (!promoted) save();
       if (scanModeOpen) renderScanMode(); else renderSetup();
       return result;
     } catch (error) { if (context && run === lifecycle) state.workflowError = 'Reconciliation required: ' + error.message; }
@@ -675,7 +697,7 @@
     window.setTimeout(() => document.getElementById("pas-scan-input")?.focus(), 0);
   }
   function scanModeBody(selected) {
-    if (currentQueue().every(r => r.completedAt)) return `<section class="pas-scan-result"><h2>PICKING LIST COMPLETE</h2><strong>${esc(state.pl.pickingListNumber)}</strong><p>${currentQueue().length} TOTAL COMPLETED</p><p>${esc(state.completedAt || currentQueue().map(r => r.completedAt).sort().at(-1))}</p>${startNewAction()}</section>`;
+    if (currentQueue().every(r => r.completedAt)) return `<section class="pas-scan-result"><h2>PICKING LIST COMPLETE</h2><strong>${esc(state.pl.pickingListNumber)}</strong><p>${currentQueue().length} TOTAL COMPLETED</p><p>${esc(state.completedAt || currentQueue().map(r => r.completedAt).sort().at(-1))}</p>${state.completionNotice ? `<p role="status">${esc(state.completionNotice)}</p>` : ''}${startNewAction()}</section>`;
     const draft = state.pendingPackageId ? pendingParts() : null;
     if (draft && !draft.ready) return partsBody(selected, draft);
     if (state.pendingPackageId && draft?.savePending && scanState.error !== "WRONG PACKAGE CONFIRMATION") return `${resultBody("PACKAGE CONFIRMED — PART USED SAVE PENDING", selected, "PACKAGE SCAN MATCHED")}
@@ -723,8 +745,8 @@
         const result = await window.MkiteB044Picking.complete({ pickingListNumber: state.pl.pickingListNumber, pickingListRecordId: state.pl.pickingListRecordId, packageRecordId: item.packageRecordId, trackingNumber: item.trackingNumber, confirmationTracking: entered, ...(draft ? { partsReady: true, parts: draft.parts } : {}) });
         if (!context || run !== lifecycle) return;
         if (draft && result.partsPersisted !== true) throw new Error("PART USED persistence was not confirmed. Keep this unit and retry the same tracking scan against the updated Worker.");
-        item.actualParts = draft?.parts || []; state.temporaryParts = null; item.completedAt = result.completedAt; item.packageStatus = result.status; item.partsPersisted = result.partsPersisted; item.reconciliationRequired = false; state.pendingPackageId = null; state.pendingConfirmationTracking = null; if (result.pickingListComplete) state.completedAt = result.completedAt; save(); context.audio.success();
-      } catch (error) { if (context && run === lifecycle) { scanState.error = error.message; if (draft) { draft.savePending = true; save(); } await reconcilePickingList(); context.audio.failure(); } }
+        applyConfirmedCompletion(item, { ...result, actualParts: draft?.parts || [] }); context.audio.success();
+      } catch (error) { if (context && run === lifecycle) { const pendingId = state.pendingPackageId; scanState.error = error.message; if (draft) { draft.savePending = true; save(); } const reconciled = await reconcilePickingList({ promotePending: error.retryable === true }); if (pendingId && !state.pendingPackageId && reconciled) { scanState.error = ''; context.audio.success(); context.toast.show('PACKAGE CONFIRMED'); } else context.audio.failure(); } }
       finally { if (context && run === lifecycle) { operationBusy = false; if (scanModeOpen) { if (state.pendingPackageId) renderScanMode(); else readyScan(); } else renderSetup(); } }
       return;
     }
@@ -802,7 +824,7 @@
 
   const module = {
     render,
-    init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; startLocationLookup(); restore(); renderSetup(); reconcilePickingList(); },
+    init(nextContext) { lifecycle += 1; operationBusy = false; context = nextContext; startLocationLookup(); restore(); renderSetup(); reconcilePickingList({ promotePending: true }); },
     cleanup() { locationLookup?.dispose(); locationLookup=null; adminRecoveryKey = ''; lifecycle += 1; operationBusy = false; document.getElementById("b044-a4-frame")?.remove(); document.getElementById("pas-print-frame")?.remove(); context = null; previewOpen = false; scanModeOpen = false; },
     _test: { inventoryPrintSnapshot, reconcileStaleOwnership, staleOwnershipMarkup, locationMarkup, adminRecovery, adminRecoveryMarkup, recoveryAvailable, resumeExistingPickingList, reconcilePickingList, startNewPickingList, isTerminalPickingList, possiblePartsMarkup, addPart, removePart, confirmParts, editParts, pendingParts, commandSummary, prepareCommands, commandPages, commandLabelMarkup, packageLabels, qrSvg, qrImage, printDocument, parseOrderNumber, parseWorksheet, parseWorkbook, normalizeDate, normalize, classifyScan, selectCandidate, printService, processScan, confirmCandidate, openScanMode, closeScanMode, currentQueue, counts, renderPreview, printBatchWithDialog, workflowPanel, prepareInventory, createPickingList, removeExcel, resetSession, cancelPickingList, setProgress, clearProgress, progressMarkup, getState: () => state, getScanState: () => scanState, REQUIRED_HEADERS, SUPPORTED_ORDER_PREFIXES }
   };

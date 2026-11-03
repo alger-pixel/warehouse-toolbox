@@ -448,3 +448,6 @@ Open `index.html` directly in a modern browser or use VS Code Live Server. No in
 ## GitHub Pages Compatibility
 
 All resources use relative paths. Navigation uses URL hashes such as `#dashboard`, `#tools`, `#tool/matching`, `#client-tools`, `#client/b044/tool/put-away-scan`, `#in-house-tools`, and `#in-house-tool/receiving`, so repository-subdirectory hosting and browser refreshes do not require server routing. The static site has no embedded backend, secrets, CDN dependencies, or build step.
+# Local development
+
+Run the normal protected Worker with `npm run worker:dev`. For an explicit, temporary browser test of production Download Centre archival, stop the normal Worker and run `npm run worker:dev:download-center-e2e`. Stop the controlled session before returning to normal development; the activation applies only to that Worker process.

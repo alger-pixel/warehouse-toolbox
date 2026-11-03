@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "worker:dev": "npx wrangler dev --config worker/wrangler.toml --local --port 8787",
+    "worker:dev:download-center-e2e": "node scripts/worker-dev-download-center-e2e.js",
     "worker:check": "node scripts/check-worker-config.js",
     "worker:deploy": "npm run worker:check && npx wrangler deploy --config worker/wrangler.toml",
     "frontend:dev": "node scripts/local-dev-server.js",

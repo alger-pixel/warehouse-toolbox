@@ -249,6 +249,7 @@
     else if (route.view === "operation-news") title = "Operation News";
     else if (route.view === "operation-news/post") title = "Post Operation News";
     else if (route.view === "operation-news/detail") title = "Operation News Detail";
+    else if (route.view === "download-center") title = "Download Centre";
     else if (route.view === "cases") title = "Case Operations";
     else if (route.view === "cases/create") title = "Create Case";
     else if (route.view === "cases/report") title = "Report Case";
@@ -264,7 +265,7 @@
     else title = route.view === "tools" ? "Assisting Tools" : route.view === "client-tools" ? "Client Tools" : route.view === "in-house-tools" ? "In House Tools" : route.view.charAt(0).toUpperCase() + route.view.slice(1);
     sectionTitle.textContent = title; document.title = `${title} | MKITE Warehouse Tools`;
     const navigationRoute = route.view.startsWith("projects") || route.view.startsWith("cases") || route.view.startsWith("operation-news") ? "projects" : route.view.startsWith("settings/") ? "settings" : route.view === "tool" ? "tools" : route.view === "in-house-tool" ? "in-house-tools" : ["client", "client-tool"].includes(route.view) ? "client-tools" : route.view;
-    document.querySelectorAll(".nav-item").forEach((item) => { const active = item.dataset.route === navigationRoute; item.classList.toggle("is-active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
+    document.querySelectorAll(".nav-item").forEach((item) => { const active = (item.dataset.route||item.dataset.navRoute) === navigationRoute; item.classList.toggle("is-active", active); if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current"); });
     if (route.view === "operating-dashboard") { activeToolModule=window.MkiteOperatingDashboard; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
     else if (route.view === "dashboard") renderDashboard();
     else if (route.view === "projects") renderProjects();
@@ -273,6 +274,7 @@
     else if (route.view === "operation-news") { activeToolModule=window.MkiteNewsList; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
     else if (route.view === "operation-news/post") { activeToolModule=window.MkitePostNews; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
     else if (route.view === "operation-news/detail") { activeToolModule=window.MkiteNewsDetail; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent,newsId:route.newsId}); }
+    else if (route.view === "download-center") { activeToolModule=window.MkiteDownloadCenter; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
     else if (route.view === "cases") { activeToolModule=window.MkiteCaseOperations; mainContent.innerHTML=activeToolModule.renderHub(); }
     else if (route.view === "cases/create") { activeToolModule=window.MkiteCreateCase; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
     else if (route.view === "cases/report") { activeToolModule=window.MkiteReportCase; mainContent.innerHTML=activeToolModule.render(); activeToolModule.init({root:mainContent}); }
@@ -292,7 +294,7 @@
   }
 
   document.addEventListener("click", (event) => {
-    const routeButton = event.target.closest("[data-route]"); if (routeButton) window.MkiteRouter.navigate({ view: routeButton.dataset.route });
+    const routeButton = event.target.closest("[data-route],[data-nav-route]"); if (routeButton) window.MkiteRouter.navigate({ view: routeButton.dataset.route||routeButton.dataset.navRoute });
     const toolButton = event.target.closest("[data-tool-id]"); if (toolButton) { const tool = window.MkiteToolRegistry.get(toolButton.dataset.toolId); if (tool.status === "active") window.MkiteRouter.navigate({ view: "tool", toolId: tool.id }); else window.MkiteToast.show(`${tool.name} is coming soon`); }
     const clientToolButton = event.target.closest("[data-client-tool-id]"); if (clientToolButton && !clientToolButton.disabled) window.MkiteRouter.navigate({ view: "client-tool", warehouse: clientToolButton.dataset.warehouse, clientId: clientToolButton.dataset.clientId, toolId: clientToolButton.dataset.clientToolId });
     const clientButton = event.target.closest("[data-client-id]:not([data-client-tool-id])"); if (clientButton) window.MkiteRouter.navigate({ view: "client", clientId: clientButton.dataset.clientId });

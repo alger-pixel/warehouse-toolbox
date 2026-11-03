@@ -74,6 +74,7 @@ export function createTinecoSnEnrichmentService(env, { fetchImpl = fetch, timeou
   }
 
   return { async enrich(rows) {
+    const startedAt=Date.now();
     const serials = [...new Set((Array.isArray(rows) ? rows : []).map(row => normalizeSn(row?.SN)).filter(Boolean))];
     const enrichment = new Map(), diagnostic={unique:serials.length,cacheHitFresh:0,cacheHitStale:0,cacheMiss:0,negativeHit:0,upstreamRequested:0,upstreamSuccess:0,upstreamNoMatch:0,upstreamRetried:0,staleServed:0,lookupFailed:0,cacheReadFailed:0,cacheWriteFailed:0,cacheInvalid:0,circuitOpen:false,reasons:{}};
     activeDiagnostic = diagnostic; let failFastReason = null, rateLimitedFailures = 0;
@@ -102,6 +103,6 @@ export function createTinecoSnEnrichmentService(env, { fetchImpl = fetch, timeou
       }
     }
     finally { activeDiagnostic = null; }
-    onDiagnostic(diagnostic); return { enrichment, diagnostic };
+    diagnostic.durationMs=Date.now()-startedAt;onDiagnostic(diagnostic); return { enrichment, diagnostic };
   }, lookup };
 }

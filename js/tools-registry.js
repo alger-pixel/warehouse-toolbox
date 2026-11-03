@@ -6,7 +6,7 @@
    * dashboard, and search views consume this registry.
    */
   const tools = [
-    { id: "matching", name: "Matching", description: "Validate scanned values against a known list.", category: "Validation", status: "active", priority: 1, icon: "match", theme: "matching", module: "matching" },
+    { id: "matching", toolId: "AT-MATCHING-0001", name: "Matching", description: "Validate scanned values against a known list.", category: "Validation", status: "active", priority: 1, icon: "match", theme: "matching", module: "matching", warehouse: "", clientId: "", toolType: "Assisting Tool", route: "#tool/matching" },
     { id: "sorting", name: "Sorting", description: "Assign scanned values to numbered pallets.", category: "Operations", status: "active", priority: 2, icon: "sort", theme: "sorting", module: "sorting" },
     { id: "counting", name: "Counting", description: "Count values, SKUs, quantities, and unique data.", category: "Data", status: "coming-soon", priority: 3, icon: "count", theme: "counting" },
     { id: "data-cleaning", name: "Data Cleaning", description: "Prepare and normalize warehouse data.", category: "Data", status: "coming-soon", priority: 4, icon: "data", theme: "cleaning" },

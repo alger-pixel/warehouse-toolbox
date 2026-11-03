@@ -95,7 +95,7 @@
       const response=await window.MkiteApiClient.post('/api/picking-lists/search',{...activeQuery,export:true});
       if(!ctx||run!==revision)return;if(!response.ok)throw Error(response.error?.message||'Export failed.');
       const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Toronto',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-      window.XLSX.writeFile(workbook(response.data),`BATCH_PICKING_LIST_${date}.xlsx`);q('#bpl-message').textContent='All filtered Picking Lists exported.';
+      await window.MkiteGeneratedFileDelivery.deliverXlsx({generatorKey:'batch-picking-list-excel',fileName:`BATCH_PICKING_LIST_${date}.xlsx`,workbook:workbook(response.data),parameters:{resultCount:response.data.results.length},notify:message=>{q('#bpl-message').textContent=message;}});
     }catch(e){if(ctx&&run===revision)q('#bpl-message').textContent=`Unable to export. ${e.message}`;}
     finally{if(ctx&&run===revision)lock(false);}
   }

@@ -6,10 +6,10 @@ const XLSX = require('../vendor/xlsx.full.min.js');
 
 function load() {
   const bodyClasses = new Set();
-  const window = { XLSX, setTimeout: callback => { callback(); return 1; }, clearTimeout() {}, confirm: () => true, MkiteTools: {} };
-  const document = { activeElement: null, body: { classList: { add: value => bodyClasses.add(value), remove: value => bodyClasses.delete(value) } } };
-  vm.runInNewContext(fs.readFileSync('js/tools/matching.js', 'utf8'), { window, document, Intl, Date, structuredClone });
-  return { tool: window.MkiteTools.matching, window, document, bodyClasses };
+  const links = [], window = { XLSX, setTimeout: callback => { callback(); return 1; }, clearTimeout() {}, confirm: () => true, MkiteTools: {}, crypto: { randomUUID: () => '12345678-1234-4234-8234-123456789012' }, URL: { createObjectURL: blob => (links.push({ blob }), 'blob:test'), revokeObjectURL() {} }, MkiteDownloadCenterApi: { registerGenerated: async () => ({ status: 'READY' }) } };
+  const document = { activeElement: null, createElement: () => ({ click() { links.at(-1).clicked = true; }, remove() {} }), body: { appendChild(link) { links.at(-1).link = link; }, classList: { add: value => bodyClasses.add(value), remove: value => bodyClasses.delete(value) } } };
+  const sandbox={window,document,Intl,Date,Blob,Uint8Array,structuredClone};vm.runInNewContext(fs.readFileSync('js/generated-file-delivery.js','utf8'),sandbox);vm.runInNewContext(fs.readFileSync('js/tools/matching.js', 'utf8'), sandbox);
+  return { tool: window.MkiteTools.matching, window, document, bodyClasses, links };
 }
 
 function session(tool, knownText, events) {
@@ -40,7 +40,7 @@ function uiFixture() {
 
 test('registry, route assets and Matching V2 controls remain wired to the existing tool', () => {
   const registryWindow = {}; vm.runInNewContext(fs.readFileSync('js/tools-registry.js', 'utf8'), { window: registryWindow });
-  const entry = registryWindow.MkiteToolRegistry.get('matching'); assert.equal(entry.module, 'matching'); assert.equal(entry.status, 'active');
+  const entry = registryWindow.MkiteToolRegistry.get('matching'); assert.equal(entry.module, 'matching'); assert.equal(entry.status, 'active'); assert.deepEqual({id:entry.id,toolId:entry.toolId,name:entry.name,warehouse:entry.warehouse,clientId:entry.clientId,toolType:entry.toolType,route:entry.route},{id:'matching',toolId:'AT-MATCHING-0001',name:'Matching',warehouse:'',clientId:'',toolType:'Assisting Tool',route:'#tool/matching'});
   const html = load().tool.render(); assert.match(html, /START SCAN MODE/); assert.match(html, /EXPORT EXCEL/); assert.match(html, /data-tool-action="reset">Reset Session/); assert.match(html, /CLEAN RESET MATCHING TOOL/); assert.match(html, /data-clean-reset-dialog/);
   const index = fs.readFileSync('index.html', 'utf8'); assert.match(index, /vendor\/xlsx\.full\.min\.js/); assert.match(index, /js\/tools\/matching\.js/); assert.match(index, /css\/tools\/matching\.css/);
 });
@@ -89,6 +89,16 @@ test('leading-zero identities stay text and restored persistence produces the sa
   const { workbook } = tool.test.buildWorkbook(XLSX, restored, known, new Date('2026-10-20T11:00:00')); const history = workbook.Sheets['SCAN HISTORY'], summary = workbook.Sheets.SUMMARY;
   assert.equal(history.B2.t, 's'); assert.equal(history.B2.v, ' 0000123 '); assert.equal(summary.A9.t, 's'); assert.equal(summary.A9.v, '0000123'); assert.deepEqual(XLSX.utils.sheet_to_json(summary, { header: 1, defval: '' })[8].slice(0, 3), ['0000123', 'MATCHED', 1]);
 });
+
+test('EXPORT EXCEL serializes once, downloads first, and archives the exact same bytes with bounded context', async () => {
+  const h=uiFixture(), order=[];h.tool.state.history=[{number:1,input:'ABC001',status:h.tool.test.STATUS.MATCHED,timestamp:'2026-10-29T12:00:00Z'}];h.tool.state.counters={total:1,matched:1,duplicate:0,failed:0};const original=h.window.XLSX.write;let writes=0,archived;
+  h.window.XLSX={...h.window.XLSX,write(...args){writes++;return original(...args);}};h.window.URL.createObjectURL=blob=>(order.push('download'),h.links.push({blob}),'blob:test');h.window.MkiteDownloadCenterApi.registerGenerated=async payload=>(order.push('archive'),archived=payload,{status:'READY'});
+  assert.equal(await h.tool.exportExcel(),true);assert.equal(writes,1);assert.deepEqual(order,['download','archive']);assert.equal(archived.bytes instanceof Uint8Array,true);assert.equal((await h.links[0].blob.arrayBuffer()).byteLength,archived.bytes.byteLength);assert.equal(archived.fileName.startsWith('MKITE-Matching-'),true);assert.deepEqual(structuredClone(archived.parameters),{knownItemCount:2,matchedCount:1,multipleScanCount:0,failedCount:0,totalScanCount:1});assert.equal(h.notices.at(-1),'Excel downloaded and saved to Download Centre.');
+});
+
+test('archive failure preserves the completed local download and reports a specific warning',async()=>{const h=uiFixture();h.tool.state.history=[{number:1,input:'ABC001',status:h.tool.test.STATUS.MATCHED}];h.tool.state.counters={total:1,matched:1,duplicate:0,failed:0};h.window.MkiteDownloadCenterApi.registerGenerated=async()=>{throw Error('blocked');};assert.equal(await h.tool.exportExcel(),true);assert.equal(h.links[0].clicked,true);assert.equal(h.notices.at(-1),'Excel downloaded. Could not save to Download Centre.');});
+
+test('concurrent double click is bounded to one generation and one registration',async()=>{const h=uiFixture();h.tool.state.history=[{number:1,input:'ABC001',status:h.tool.test.STATUS.MATCHED}];let release,calls=0;h.window.MkiteDownloadCenterApi.registerGenerated=()=>{calls++;return new Promise(resolve=>{release=resolve;});};const first=h.tool.exportExcel(),second=await h.tool.exportExcel();assert.equal(second,false);assert.equal(calls,1);release({status:'READY'});assert.equal(await first,true);});
 
 test('full-screen Scan Mode still opens and exits with the existing Known List', () => {
   const h = uiFixture(); h.tool.startScanMode(); assert.equal(h.tool.scanModeActive, true); assert.equal(h.elements.scanMode.hidden, false); assert.equal(h.bodyClasses.has('matching-scan-mode-active'), true); assert.equal(h.elements.scanModeTitle.textContent, 'READY TO SCAN');

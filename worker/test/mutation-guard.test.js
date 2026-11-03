@@ -10,7 +10,7 @@ const request=(path,body={})=>new Request(`http://127.0.0.1:8787${path}`,{method
 const productionRequest=(path,body={})=>{const value=request(path,body);Object.defineProperty(value,'cf',{value:{colo:'YYZ'}});return value;};
 
 test('local runtime blocks production-data mutation routes before any coordinator runs',async()=>{
- for(const path of ['/api/b044/put-away/create-picking-list','/api/b044/put-away/cancel-picking-list','/api/b044/put-away/reconcile/execute','/api/tineco-toc/begin','/api/receiving','/api/location-move','/api/clients','/api/users/create','/api/operation-news']){
+ for(const path of ['/api/b044/put-away/create-picking-list','/api/b044/put-away/cancel-picking-list','/api/b044/put-away/reconcile/execute','/api/tineco-toc/begin','/api/receiving','/api/location-move','/api/clients','/api/users/create','/api/operation-news','/api/download-center/register']){
   const response=await handleRequest(request(path),configured),payload=await response.json();
   assert.equal(response.status,403,path);assert.equal(payload.error.code,'LOCAL_PRODUCTION_MUTATION_BLOCKED',path);
  }
@@ -58,8 +58,17 @@ test('controlled Operation News authorization is local-only, server-configured a
  const browser=request('/api/operation-news');browser.headers.set('X-Operation-News-Local-E2E','enabled');assert.equal(shouldBlockProductionMutation(browser,configured,'operation-news',collection),true);
 });
 
+test('controlled Download Centre E2E is explicit, development-only and registration-only',()=>{
+ const authorization='a'.repeat(64),register={name:'download-center',action:'register'},detail={name:'download-center',action:'detail'},local={...configured,DOWNLOAD_CENTER_LOCAL_E2E:'enabled',OPERATION_NEWS_LOCAL_E2E_AUTHORIZATION:authorization};
+ assert.equal(shouldBlockProductionMutation(request('/api/download-center/register'),local,'download-center',register),false);
+ for(const unsafe of [{...local,DOWNLOAD_CENTER_LOCAL_E2E:''},{...local,OPERATION_NEWS_LOCAL_E2E_AUTHORIZATION:''},{...local,OPERATION_NEWS_LOCAL_E2E_AUTHORIZATION:'wrong'},{...local,WORKER_RUNTIME_ENVIRONMENT:'production'},{...local,FEISHU_DATA_ENVIRONMENT:'local-test'}])assert.equal(shouldBlockProductionMutation(request('/api/download-center/register'),unsafe,'download-center',register),true);
+ assert.equal(shouldBlockProductionMutation(request('/api/download-center/anything'),local,'download-center',detail),true);
+ for(const path of ['/api/receiving','/api/users/create','/api/operation-news','/api/b044/put-away/create-picking-list'])assert.equal(shouldBlockProductionMutation(request(path),local,path.includes('operation-news')?'operation-news':'unrelated',null),true,path);
+ const browser=request('/api/download-center/register');browser.headers.set('X-Download-Center-Local-E2E','enabled');assert.equal(shouldBlockProductionMutation(browser,configured,'download-center',register),true);
+});
+
 test('mutation classification covers shared operational writers and retains explicit read-only POST routes',()=>{
- for(const route of ['b044-create','b044-cancel','b044-reconcile-execute','tineco-begin','receive','location-move','client-create','users-create','sops-create','part-used-report-create','operation-news'])assert.equal(isMutationRequest(route,null,'POST'),true,route);
+ for(const route of ['b044-create','b044-cancel','b044-reconcile-execute','tineco-begin','receive','location-move','client-create','users-create','sops-create','part-used-report-create','operation-news','download-center'])assert.equal(isMutationRequest(route,null,'POST'),true,route);
  assert.equal(isMutationRequest('operation-news',null,'PATCH'),true);
  for(const route of ['b044-prepare','b044-recover','b044-reconcile','b044-reconcile-diagnose','picking-search','inventory-lookup','tineco-inventory','users-list'])assert.equal(isMutationRequest(route,null,'POST'),false,route);
  assert.equal(isMutationRequest('projects',{action:null},'POST'),true);assert.equal(isMutationRequest('cases',{action:null},'POST'),true);assert.equal(isMutationRequest('projects',{action:null},'GET'),false);

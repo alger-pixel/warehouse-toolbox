@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createTinecoLocationEnrichmentService, LOCATION_LOOKUP_CONCURRENCY, LOCATION_RATE_LIMIT_CIRCUIT_THRESHOLD } from '../src/modules/tineco-inventory/location-enrichment-service.js';
+import { createWarehouseInventoryLookupService } from '../src/modules/inventory-lookup/inventory-service.js';
+import { tinecoLocationCacheKey } from '../src/modules/cache/enrichment-cache.js';
+
+function memoryKv(){const data=new Map();return {data,puts:[],async get(key){return data.get(key)??null;},async put(key,value,options){this.puts.push({key,value,options});data.set(key,value);}};}
+
+test('location enrichment deduplicates SNs, bounds concurrency, and caches success and empty',async()=>{
+ let active=0,maximum=0,calls=0;const kv=memoryKv(),warehouse={lookup:async({sku})=>{calls++;active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,1));active--;return {locations:sku==='NONE'?[]:[{locationCode:`66-MKS-${sku}`}]};}},service=createTinecoLocationEnrichmentService(warehouse,{TINECO_ENRICHMENT_CACHE:kv},{concurrency:99});
+ const rows=[...Array.from({length:12},(_,i)=>({SN:`SN-${i}`})),{SN:'SN-1'},{SN:'NONE'}],first=await service.enrich(rows);assert.equal(calls,13);assert.ok(maximum<=LOCATION_LOOKUP_CONCURRENCY);assert.equal(first.enrichment.get('SN-1').status,'RESOLVED');assert.equal(first.enrichment.get('NONE').status,'LEGITIMATELY_EMPTY');assert.equal(kv.puts.length,13);
+ await service.enrich(rows);assert.equal(calls,13);
+});
+
+test('location enrichment keeps retryable and terminal failures distinct and never caches them',async()=>{
+ const kv=memoryKv(),warehouse={lookup:async({sku})=>{const error=Error('private');error.retryable=sku==='RETRY';error.classification=sku==='RETRY'?'network_error':'bad_request';error.attempts=sku==='RETRY'?3:1;throw error;}},service=createTinecoLocationEnrichmentService(warehouse,{TINECO_ENRICHMENT_CACHE:kv});
+ const {enrichment,diagnostic}=await service.enrich([{SN:'RETRY'},{SN:'BAD'}]);assert.equal(enrichment.get('RETRY').status,'RETRYABLE_FAILURE');assert.equal(enrichment.get('RETRY').retries,2);assert.equal(enrichment.get('BAD').status,'TERMINAL_FAILURE');assert.equal(diagnostic.unresolved,2);assert.equal(kv.puts.length,0);
+});
+test('successful upstream retries are retained in safe location diagnostics',async()=>{const service=createTinecoLocationEnrichmentService({lookup:async()=>({locations:[{locationCode:'RACK'}],retries:2})},{}),{diagnostic}=await service.enrich([{SN:'SN'}]);assert.equal(diagnostic.upstreamRetried,2);});
+
+for (const size of [50,195,500]) test(`${size}-row location enrichment grows by unique lookup key only`,async()=>{
+ let calls=0;const warehouse={lookup:async({sku})=>{calls++;return {locations:[{locationCode:`BIN-${sku}`}]};}},service=createTinecoLocationEnrichmentService(warehouse,{}),rows=Array.from({length:size},(_,index)=>({SN:`SN-${index%25}`}));
+ const {enrichment}=await service.enrich(rows);assert.equal(enrichment.size,25);assert.equal(calls,25);
+});
+for (const size of [50,195,500]) test(`${size} unique cold LOCATION rows cause exactly ${size} upstream calls`,async()=>{let calls=0;const service=createTinecoLocationEnrichmentService({lookup:async({sku})=>{calls++;return {locations:[{locationCode:`BIN-${sku}`}]};}},{});await service.enrich(Array.from({length:size},(_,index)=>({SN:`UNIQUE-${index}`})));assert.equal(calls,size);});
+
+test('mixed cache calls upstream only for unique uncached locations',async()=>{let calls=0;const kv=memoryKv(),warehouse={lookup:async({sku})=>{calls++;return {locations:[{locationCode:`BIN-${sku}`}]};}},service=createTinecoLocationEnrichmentService(warehouse,{TINECO_ENRICHMENT_CACHE:kv});await service.enrich(Array.from({length:10},(_,i)=>({SN:`SN-${i}`})));assert.equal(calls,10);await service.enrich(Array.from({length:20},(_,i)=>({SN:`SN-${i}`})));assert.equal(calls,20);});
+
+test('429 Retry-After is bounded, retried once, and eventual success is cached',async()=>{let calls=0;const waits=[],env={MKITE_WAREHOUSE_API_KEY:'secret',MKITE_WAREHOUSE_API_URL:'https://warehouse.example/lookup'},response=()=>Response.json({code:0,data:{page:1,pageSize:200,total:1,items:[{inventoryId:'I',locationCode:'RACK-7',warehouseId:'W',warehouseCode:'MKS66',availableQuantity:1,lockedQuantity:0,inventoryQuantity:1}]}}),warehouse=createWarehouseInventoryLookupService(env,{sleep:async ms=>waits.push(ms),random:()=>.5,fetchImpl:async()=>++calls===1?new Response('',{status:429,headers:{'Retry-After':'99'}}):response()}),service=createTinecoLocationEnrichmentService(warehouse,{}),first=await service.enrich([{SN:'SN'}]);assert.equal(calls,2);assert.deepEqual(waits,[2000]);assert.equal(first.enrichment.get('SN').status,'RESOLVED');assert.equal(first.diagnostic.upstreamRetried,1);});
+
+test('trusted stale LOCATION survives exhausted 429 without cache overwrite',async()=>{const now=Date.parse('2026-11-02T12:00:00Z'),kv=memoryKv(),key=await tinecoLocationCacheKey('SN'),entry={schemaVersion:1,kind:'tineco-location',sn:'SN',outcome:'SUCCESS',locations:['TRUSTED-RACK'],fetchedAt:new Date(now-11*60*1000).toISOString()};kv.data.set(key,JSON.stringify(entry));let calls=0;const error=Object.assign(Error('rate limited'),{retryable:true,classification:'rate_limited',attempts:3}),service=createTinecoLocationEnrichmentService({lookup:async()=>{calls++;throw error;}},{TINECO_ENRICHMENT_CACHE:kv},{now:()=>now}),value=(await service.enrich([{SN:'SN'}])).enrichment.get('SN');assert.equal(calls,1);assert.equal(value.status,'RESOLVED');assert.equal(value.source,'stale-cache');assert.equal(value.refreshFailed,true);assert.deepEqual(value.locations,['TRUSTED-RACK']);assert.equal(kv.puts.length,0);});
+test('exhausted 429 opens a request circuit and prevents a cold-page retry storm',async()=>{let logicalCalls=0;const error=Object.assign(Error('rate limited'),{retryable:true,classification:'rate_limited',attempts:3}),service=createTinecoLocationEnrichmentService({lookup:async()=>{logicalCalls++;throw error;}},{}),{enrichment,diagnostic}=await service.enrich(Array.from({length:50},(_,i)=>({SN:`RATE-${i}`})));assert.equal(logicalCalls,LOCATION_RATE_LIMIT_CIRCUIT_THRESHOLD);assert.equal(diagnostic.circuitOpen,true);assert.equal(diagnostic.upstreamRequested,LOCATION_RATE_LIMIT_CIRCUIT_THRESHOLD);assert.equal(enrichment.size,50);assert.ok([...enrichment.values()].every(value=>value.status==='RETRYABLE_FAILURE'));});

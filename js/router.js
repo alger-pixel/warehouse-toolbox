@@ -9,6 +9,7 @@
     if (value === "projects/create-report") return { view: "projects/create-report" };
     if (value === "operation-news") return { view: "operation-news" };
     if (value === "operation-news/post") return { view: "operation-news/post" };
+    if (value === "download-center") return { view: "download-center" };
     const newsMatch=value.match(/^operation-news\/([^/]+)$/);
     if(newsMatch){try{return {view:"operation-news/detail",newsId:decodeURIComponent(newsMatch[1])};}catch{return {view:"operation-news"};}}
     if (value === "cases") return { view: "cases" };
@@ -28,7 +29,7 @@
     const clientMatch = value.match(/^client\/([^/]+)$/);
     if (clientMatch) return { view: "client", clientId: clientMatch[1] };
     if (value.startsWith("tool/")) return { view: "tool", toolId: value.slice(5) };
-    return { view: ["operating-dashboard", "dashboard", "projects", "tools", "client-tools", "in-house-tools", "settings"].includes(value) ? value : "operating-dashboard" };
+    return { view: ["operating-dashboard", "dashboard", "projects", "tools", "client-tools", "in-house-tools", "download-center", "settings"].includes(value) ? value : "operating-dashboard" };
   }
   function current() { return parse(window.location.hash); }
   function navigate(route) {

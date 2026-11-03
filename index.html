@@ -24,10 +24,11 @@
   <link rel="stylesheet" href="css/case-category.css?v=case-category-v1">
   <link rel="stylesheet" href="css/projects.css?v=daily-report-quantity-validation-v1">
   <link rel="stylesheet" href="css/operation-news.css?v=operation-news-m3">
+  <link rel="stylesheet" href="css/download-center.css?v=download-center-compact-list-v1">
   <link rel="stylesheet" href="css/cases.css?v=case-operations-hub-v1">
   <link rel="stylesheet" href="css/operating-dashboard.css?v=operating-dashboard-v1">
   <link rel="stylesheet" href="css/responsive.css">
-  <link rel="stylesheet" href="css/client-tools/tineco-inventory.css?v=tineco-live-location-reentry-v1">
+  <link rel="stylesheet" href="css/client-tools/tineco-inventory.css?v=tineco-working-dataset-m6-3">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -49,6 +50,7 @@
         <button class="nav-item" type="button" data-route="in-house-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V8l9-5 9 5v13M7 21v-8h10v8M9 10h6"/></svg><span>In House Tools</span></button>
         <button class="nav-item" type="button" data-route="client-tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20v-9l8-4 8 4v9M8 9V5h8v4M8 15h2m4 0h2M12 12v8"/></svg><span>Client Tools</span></button>
         <button class="nav-item" type="button" data-route="tools"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2"/></svg><span>Assisting Tools</span></button>
+        <button class="nav-item" type="button" data-nav-route="download-center"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v5h16v-5M12 3v12m0 0 4-4m-4 4-4-4"/></svg><span>Download Centre</span></button>
         <button class="nav-item" type="button" data-route="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg><span>Settings</span></button>
       </nav>
       <div class="sidebar-footer">
@@ -100,6 +102,9 @@
   <script src="js/services/api-config.js?v=local-same-origin-proxy-1"></script>
   <script src="js/services/api-client.js?v=case-media-url-3"></script>
   <script src="js/operation-news/operation-news-api.js?v=operation-news-m3"></script>
+  <script src="js/download-center-api.js?v=download-center-m4"></script>
+  <script src="js/generated-file-delivery.js?v=download-center-m5"></script>
+  <script src="js/download-center.js?v=download-center-compact-list-v1"></script>
   <script src="js/operation-news/post-news.js?v=operation-news-m3"></script>
   <script src="js/operation-news/news-list.js?v=operation-news-m3"></script>
   <script src="js/operation-news/news-detail.js?v=operation-news-m3"></script>
@@ -108,7 +113,7 @@
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="vendor/exceljs.min.js"></script>
   <script src="vendor/qrcode.min.js"></script>
-  <script src="js/tools/matching.js"></script>
+  <script src="js/tools/matching.js?v=matching-download-center-m4"></script>
   <script src="js/tools/sorting.js"></script>
   <script src="js/tools/safety-icon-maintain.js"></script>
   <script src="js/tools/sop-builder-model.js"></script>
@@ -127,7 +132,7 @@
   <script src="js/in-house-tools/batch-inventory.js"></script>
   <script src="js/in-house-tools/batch-picking-list.js"></script>
   <script src="js/in-house-tools/part-used-inventory-count.js"></script>
-  <script src="js/client-tools/tineco-toc/inventory.js?v=tineco-live-location-reentry-v1"></script>
+  <script src="js/client-tools/tineco-toc/inventory.js?v=tineco-working-dataset-m6-3"></script>
   <script src="js/in-house-tools/move-location-by-sku/move-location.js"></script>
   <script src="js/settings/user-management.js"></script>
   <script src="js/settings/case-category.js?v=case-category-v1"></script>
