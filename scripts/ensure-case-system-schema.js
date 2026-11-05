@@ -25,9 +25,9 @@ const TABLES = Object.freeze([
     purpose: 'One row per operational Case, including assignments, snapshots, reports, evidence, issue state, completion, and audit data.',
     fields: [
       text('CASE ID'), text('CASE TITLE'), select('STATUS', ['Assigned', 'In Progress', 'Pending With Issue', 'Completed']), select('PRIORITY', ['Normal', 'Urgent']),
-      text('WAREHOUSE ID'), text('CLIENT ID'), text('CASE CATEGORY ID'), text('MAIN CATEGORY'), text('CASE CATEGORY NAME'), text('ASSIGNED USERS'),
+      text('WAREHOUSE ID'), text('CLIENT ID'), text('CASE CATEGORY ID'), text('MAIN CATEGORY'), text('CASE CATEGORY NAME'), text('ASSIGNED USERS'), text('ASSIGNED WORKER'),
       text('CASE INSTRUCTION'), text('QUESTION SNAPSHOT'), text('ISSUE OPTIONS SNAPSHOT'), attachment('CASE ATTACHMENTS'), dateTime('DUE AT'),
-      text('REPORT DATA'), attachment('REPORT ASSETS'), text('CURRENT ISSUE CATEGORY'), text('CURRENT ISSUE DATA'), text('LAST REPORTED BY'),
+      text('REPORT DATA'), text('CASE ANSWERS'), attachment('REPORT ASSETS'), text('CURRENT ISSUE CATEGORY'), text('CURRENT ISSUE DATA'), text('LAST REPORTED BY'),
       dateTime('LAST REPORTED AT'), text('COMPLETED BY'), dateTime('COMPLETED AT'), text('CREATED BY'), dateTime('CREATED AT'),
       text('UPDATED BY'), dateTime('UPDATED AT'), text('NOTE')
     ]

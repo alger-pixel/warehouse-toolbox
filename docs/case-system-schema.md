@@ -54,12 +54,14 @@ Primary identity: the original default primary Text field was reused as `CASE ID
 | MAIN CATEGORY | Text / Long Text | `fld0Im2tKo` | — | — |
 | CASE CATEGORY NAME | Text / Long Text | `fldcgWQHl4` | — | — |
 | ASSIGNED USERS | Text / Long Text | `fldJN5ZNEN` | — | Versioned structured JSON. |
+| ASSIGNED WORKER | Text / Long Text | `fldV39PfUz` | — | — |
 | CASE INSTRUCTION | Text / Long Text | `fldD1n6Fv6` | — | — |
 | QUESTION SNAPSHOT | Text / Long Text | `fldCCQVHNI` | — | Versioned structured JSON. |
 | ISSUE OPTIONS SNAPSHOT | Text / Long Text | `fldXty87z4` | — | Versioned structured JSON. |
 | CASE ATTACHMENTS | Attachment | `fld5wC5JEt` | — | — |
 | DUE AT | Date & Time | `fldCfcJAeu` | — | — |
 | REPORT DATA | Text / Long Text | `fldb92jseB` | — | Versioned structured JSON. |
+| CASE ANSWERS | Text / Long Text | `fldHoGUTkF` | — | — |
 | REPORT ASSETS | Attachment | `fldB4QGpcJ` | — | — |
 | CURRENT ISSUE CATEGORY | Text / Long Text | `fldnzRQo4F` | — | — |
 | CURRENT ISSUE DATA | Text / Long Text | `fldggesgJ0` | — | Versioned structured JSON. |
@@ -73,7 +75,7 @@ Primary identity: the original default primary Text field was reused as `CASE ID
 | UPDATED AT | Date & Time | `fldlZCny5a` | — | — |
 | NOTE | Text / Long Text | `fldgcHbKnQ` | — | — |
 
-Verified: **Yes**. Created on this run: **1**. Reused primary fields: **0**.
+Verified: **Yes**. Created on this run: **0**. Reused primary fields: **0**.
 
 ## Validation
 
