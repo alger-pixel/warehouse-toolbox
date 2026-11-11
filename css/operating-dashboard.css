@@ -265,3 +265,37 @@
   .app-shell:has(.opd) .workspace{background-attachment:scroll;background-position:62% top}
   .opd-top>.opd-header,.opd-summary-group,.opd-conflicts,.opd-range,.opd-world-clocks,.opd-news,.opd-timeline{--opd-backdrop:blur(15px) saturate(125%)}
 }
+
+/* Shared spacing rhythm: one major gap joins the header row, workspace columns, and information rail. */
+.app-shell:has(.opd){
+  --opd-space-major:12px;
+  --opd-space-compact:6px;
+  --opd-panel-inline:14px;
+  --opd-workspace-inline:clamp(18px,2vw,32px);
+}
+.main-content:has(.opd){padding:24px var(--opd-workspace-inline) 40px}
+.opd,.opd [data-opd-content],.opd-top,.opd-workspace,.opd-rail{gap:var(--opd-space-major)}
+.opd [data-opd-content]{display:grid}
+.opd-top>.opd-header,.opd-top>.opd-summary-group{align-self:stretch;height:156px}
+.opd-workspace{align-items:start}
+.opd-primary,.opd-rail,.opd-range,.opd-world-clocks,.opd-rail .opd-news,.opd-rail .opd-conflicts{width:100%}
+.opd-range{align-content:center;padding:12px var(--opd-panel-inline);column-gap:10px;row-gap:var(--opd-space-compact)}
+.opd-world-clocks{padding:12px var(--opd-panel-inline)}
+.opd-rail .opd-news>header{padding-right:var(--opd-panel-inline);padding-left:calc(var(--opd-panel-inline) - 3px)}
+.opd-timeline>header{min-height:160px;box-sizing:border-box}
+.opd-timeline-clock{align-content:center;align-self:stretch}
+
+@media(max-width:899px){
+  .app-shell:has(.opd){--opd-workspace-inline:18px}
+  .main-content:has(.opd){padding-block:20px 34px}
+  .opd-top>.opd-header,.opd-top>.opd-summary-group{height:auto}
+  .opd-top>.opd-header{min-height:156px}
+}
+@media(max-width:599px){
+  .app-shell:has(.opd){--opd-space-major:12px;--opd-panel-inline:14px;--opd-workspace-inline:12px}
+  .main-content:has(.opd){padding-block:14px 28px}
+  .opd-top>.opd-header{min-height:160px}
+  .opd-timeline>header{min-height:0}
+  .opd-workspace{display:grid;grid-template-areas:"rail" "primary";grid-template-columns:minmax(0,1fr)}
+  .opd-rail{display:grid;grid-template-columns:minmax(0,1fr)}
+}
