@@ -16,7 +16,7 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 for(const origin of ['http://127.0.0.1:5501','https://example.github.io'])test(`Create Case loads and submits operational requests without credentials at ${origin}`,async()=>{
  const h=setup(origin);await flush();assert.equal(h.node('[data-case-workspace]').hidden,false);assert.equal(h.node('[data-case-load]').removed,true);
  assert.match(h.node('[data-case-workspace]').innerHTML,/Select warehouse[\s\S]*MKS66/);
- h.node('[data-case-form]').handlers.change({target:{name:'warehouseId'}});h.click('[data-category-id]',{categoryId:category.categoryId});h.click('[data-worker-id]',{workerId:'U-0001'});
+ h.node('[data-case-form]').handlers.change({target:{name:'warehouseId'}});h.click('[data-category-id]',{categoryId:category.categoryId});h.node('[data-worker-search]').handlers.focus();h.click('[data-worker-id]',{workerId:'U-0001'});assert.doesNotMatch(h.node('[data-worker-chips]').innerHTML,/Worker/);h.click('[data-worker-done]',{});
  assert.match(h.node('[data-worker-chips]').innerHTML,/Worker/);assert.match(h.node('[data-selected-category]').innerHTML,/Receiving/);
  await h.node('[data-case-form]').handlers.submit({preventDefault(){}});assert.match(h.node('[data-case-workspace]').innerHTML,/CASE CREATED SUCCESSFULLY/);
  assert.deepEqual(h.calls.map(call=>[call.init.method,call.path]),[['GET','/api/cases/categories'],['GET','/api/cases/assignment-options'],['POST','/api/cases']]);
